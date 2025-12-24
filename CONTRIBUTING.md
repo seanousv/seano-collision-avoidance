@@ -28,3 +28,4 @@ git checkout -b Haidar/collision-avoidance
 docs: add contributing guide
 git add .
 git commit -m "docs: add contributing guide"
+git push -u origin Haidar/collision-avoidance
