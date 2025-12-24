@@ -10,16 +10,14 @@ Target runtime: **ROS 2 Humble**, komputasi Jetson (Orin Nano), pipeline CV/AI.
 
 ## Repo Structure
 
-seano-collision-avoidance/
-├─ seano_ca_ws/ # ROS 2 workspace (di dalam repo)
-│ ├─ src/
-│ │ └─ seano_vision/ # paket ROS2 (contoh awal: camera_node)
-│ ├─ build/ # di-ignore
-│ ├─ install/ # di-ignore
-│ └─ log/ # di-ignore
-├─ README.md
-└─ CONTRIBUTING.md
-
+seano_ca_ws/
+src/
+seano_vision/ # ROS 2 package (camera bridge)
+seano_vision/
+camera_node.py
+package.xml
+setup.py
+setup.cfg
 
 
 ---
