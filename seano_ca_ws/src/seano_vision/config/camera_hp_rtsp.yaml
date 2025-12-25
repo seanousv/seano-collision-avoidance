@@ -1,0 +1,29 @@
+camera_hp:
+  ros__parameters:
+    source: "url"
+    backend: "gstreamer"
+    url: "rtsp://192.168.1.7:8080/h264.sdp"
+
+    rtsp_tcp: true
+    gstreamer_latency_ms: 120
+    max_age_ms: 250
+    prefer_h264_pipeline: true
+
+    publish_in_reader: true
+    max_fps: 15.0
+    max_age_ms: 120
+    grab_skip: 0
+
+    output_encoding: "bgr8"
+    swap_rb: true
+
+    rotate: 0
+    resize_width: 0
+    resize_height: 0
+
+    publish_best_effort: true
+    publish_reliable: true
+    topic_best_effort: "/camera/image_raw"
+    topic_reliable: "/camera/image_raw_reliable"
+    frame_id: "camera"
+
