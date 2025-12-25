@@ -29,6 +29,7 @@ setup(
     entry_points={
     'console_scripts': [
         'camera_node = seano_vision.camera_node:main',
+        'detector_node = seano_vision.detector_node:main',
     ],
 },
 )
