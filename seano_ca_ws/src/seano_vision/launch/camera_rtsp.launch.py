@@ -24,7 +24,7 @@ def generate_launch_description():
         # yang sering berubah kita jadiin launch-arg
         DeclareLaunchArgument(
             "url",
-            default_value="rtsp://192.168.1.4:8080/h264.sdp",
+            default_value="rtsp://192.168.1.3:8080/h264.sdp",
             description="RTSP URL",
         ),
         DeclareLaunchArgument("swap_rb", default_value="true", description="Swap R/B channels"),

@@ -4,13 +4,19 @@
 """
 SEANO Collision Avoidance - Risk Evaluator Node (ROS2 Humble)
 
-Subscribe:
-  - /camera/detections        (vision_msgs/Detection2DArray)
-  - /camera/image_raw_reliable (sensor_msgs/Image)
+Subscribe (core):
+  - /camera/detections           (vision_msgs/Detection2DArray)
+  - /camera/image_raw_reliable   (sensor_msgs/Image)
+
+Subscribe (vision health / optional but recommended):
+  - /vision/quality              (std_msgs/Float32)  -> vision quality external
+  - /vision/freeze               (std_msgs/Bool)     -> freeze flag
+  - /vision/freeze_reason        (std_msgs/String)   -> e.g. "still", "moving", "timeout"
 
 Publish:
   - /ca/risk            (std_msgs/Float32)
   - /ca/command         (std_msgs/String)
+  - /ca/mode            (std_msgs/String)   [NEW]
   - /ca/metrics         (std_msgs/String JSON)
   - /ca/vision_quality  (std_msgs/Float32)
   - /ca/debug_image     (sensor_msgs/Image)
@@ -20,6 +26,7 @@ Notes:
 - Maritime-style HUD theme (navy/teal), compact & readable.
 - Bearing ruler overlay (camera-relative) for navigational feel.
 - Image buffer by stamp to better align debug overlay with detections.
+- Added state machine: NORMAL / CAUTION / LOST_PERCEPTION with hysteresis + failsafe.
 """
 
 from __future__ import annotations
@@ -37,7 +44,7 @@ from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPo
 from rclpy.parameter import Parameter
 from rcl_interfaces.msg import ParameterDescriptor, ParameterType, SetParametersResult
 
-from std_msgs.msg import Float32, String
+from std_msgs.msg import Float32, String, Bool
 from sensor_msgs.msg import Image
 from vision_msgs.msg import Detection2DArray
 
@@ -180,12 +187,14 @@ class RiskEvaluatorNode(Node):
             durability=DurabilityPolicy.VOLATILE,
         )
 
-        # Topics
+        # Topics (core)
         self.declare_parameter("detections_topic", "/camera/detections")
         self.declare_parameter("image_topic", "/camera/image_raw_reliable")
 
+        # Topics (publish)
         self.declare_parameter("risk_topic", "/ca/risk")
         self.declare_parameter("command_topic", "/ca/command")
+        self.declare_parameter("mode_topic", "/ca/mode")  # NEW
         self.declare_parameter("metrics_topic", "/ca/metrics")
         self.declare_parameter("vision_quality_topic", "/ca/vision_quality")
         self.declare_parameter("debug_image_topic", "/ca/debug_image")
@@ -252,12 +261,54 @@ class RiskEvaluatorNode(Node):
         self.declare_parameter("prefer_starboard", True)
         self.declare_parameter("emergency_turn_away", True)
 
-        # Vision quality
-        self.declare_parameter("use_vision_quality", True)
-        self.declare_parameter("vq_min", 0.25)
+        # --------------------------
+        # Vision Quality sources
+        # --------------------------
+        # Internal VQ (your existing computation)
+        self.declare_parameter("use_internal_vision_quality", True)
         self.declare_parameter("vq_check_every_n_frames", 6)
 
+        # External VQ (recommended)
+        self.declare_parameter("use_external_vision_quality", True)
+        self.declare_parameter("external_vq_topic", "/vision/quality")
+        self.declare_parameter("external_vq_timeout_s", 1.5)  # if stale -> fallback internal
+
+        # VQ threshold (for CAUTION behavior)
+        self.declare_parameter("vq_min", 0.25)  # legacy (still used as safety minimum)
+
+        # --------------------------
+        # Freeze Detector topics
+        # --------------------------
+        self.declare_parameter("use_freeze_detector", True)
+        self.declare_parameter("freeze_topic", "/vision/freeze")
+        self.declare_parameter("freeze_reason_topic", "/vision/freeze_reason")
+        self.declare_parameter("freeze_timeout_s", 1.5)  # if stale -> assume not freeze
+
+        # --------------------------
+        # State machine (NEW)
+        # --------------------------
+        self.declare_parameter("tick_hz", 10.0)  # keep publishing even if detections stop
+
+        # CAUTION hysteresis (based on VQ)
+        self.declare_parameter("vq_caution_enter", 0.35)
+        self.declare_parameter("vq_caution_exit", 0.55)
+
+        # LOST triggers
+        self.declare_parameter("image_timeout_s", 2.0)         # no new image received -> LOST
+        self.declare_parameter("lost_dark_vq", 0.25)           # vq low + freeze -> LOST
+        self.declare_parameter("lost_dark_freeze_hold_s", 1.2) # hold duration before LOST
+
+        # Recovery from LOST
+        self.declare_parameter("lost_min_hold_s", 1.0)
+        self.declare_parameter("recover_vq", 0.55)
+        self.declare_parameter("recover_ok_hold_s", 0.6)
+
+        # When no detections for long time (still publish hold/slow)
+        self.declare_parameter("detections_stale_s", 1.0)
+
+        # --------------------------
         # Image buffer sync
+        # --------------------------
         self.declare_parameter("image_buffer_size", 12)
         self.declare_parameter("max_image_age_s", 0.40)
 
@@ -311,15 +362,38 @@ class RiskEvaluatorNode(Node):
         self.image_h: Optional[int] = None
 
         self.frame_count = 0
-        self.vision_quality = 1.0
 
+        # VQ internal/external
+        self.vision_quality_internal = 1.0
+        self.vision_quality_external = 1.0
+        self.vq_ext_last_t = 0.0
+
+        # Freeze detector
+        self.freeze_flag = False
+        self.freeze_last_t = 0.0
+        self.freeze_reason = "unknown"
+        self.freeze_reason_last_t = 0.0
+
+        # Received timestamps
+        self.last_img_rx_t = 0.0
+        self.last_det_rx_t = 0.0
+
+        # Mode state machine
+        self.mode = "NORMAL"
+        self.lost_since = 0.0
+        self.ok_since = 0.0
+        self.dark_freeze_since = 0.0
+
+        # Tracking
         self.tracks: Dict[int, Track] = {}
         self.next_tid = 1
 
+        # Avoid command latch
         self.avoid_mode = False
         self.last_cmd = str(self.get_parameter("cmd_hold").value)
         self.last_cmd_time = 0.0
 
+        # Filters
         self.allow_ids: set[str] = set()
         self.deny_ids: set[str] = set()
         self._refresh_filters()
@@ -333,6 +407,7 @@ class RiskEvaluatorNode(Node):
         # pubs
         self.pub_risk = self.create_publisher(Float32, str(self.get_parameter("risk_topic").value), self.qos)
         self.pub_cmd = self.create_publisher(String, str(self.get_parameter("command_topic").value), self.qos)
+        self.pub_mode = self.create_publisher(String, str(self.get_parameter("mode_topic").value), self.qos)
         self.pub_metrics = self.create_publisher(String, str(self.get_parameter("metrics_topic").value), self.qos)
         self.pub_vq = self.create_publisher(Float32, str(self.get_parameter("vision_quality_topic").value), self.qos)
         self.pub_dbg = self.create_publisher(Image, str(self.get_parameter("debug_image_topic").value), self.qos)
@@ -345,9 +420,34 @@ class RiskEvaluatorNode(Node):
             Image, str(self.get_parameter("image_topic").value), self.on_raw_image, self.qos
         )
 
+        # optional subs (external VQ + freeze)
+        if bool(self.get_parameter("use_external_vision_quality").value):
+            self.sub_vq = self.create_subscription(
+                Float32, str(self.get_parameter("external_vq_topic").value), self.on_external_vq, 10
+            )
+        else:
+            self.sub_vq = None
+
+        if bool(self.get_parameter("use_freeze_detector").value):
+            self.sub_freeze = self.create_subscription(
+                Bool, str(self.get_parameter("freeze_topic").value), self.on_freeze, 10
+            )
+            self.sub_freeze_reason = self.create_subscription(
+                String, str(self.get_parameter("freeze_reason_topic").value), self.on_freeze_reason, 10
+            )
+        else:
+            self.sub_freeze = None
+            self.sub_freeze_reason = None
+
+        # timer (failsafe tick)
+        hz = float(self.get_parameter("tick_hz").value)
+        hz = max(1.0, hz)
+        self.timer = self.create_timer(1.0 / hz, self.on_tick)
+
         self.get_logger().info(
             f"risk_evaluator_node started | cv={_HAS_CV} depth={self.qos.depth} "
-            f"det={self.get_parameter('detections_topic').value} img={self.get_parameter('image_topic').value}"
+            f"det={self.get_parameter('detections_topic').value} img={self.get_parameter('image_topic').value} "
+            f"ext_vq={self.get_parameter('use_external_vision_quality').value} freeze={self.get_parameter('use_freeze_detector').value}"
         )
 
     # --------------------------
@@ -377,20 +477,35 @@ class RiskEvaluatorNode(Node):
         self.deny_ids.discard("")
 
     # --------------------------
-    # Image callback (buffer)
+    # External health callbacks
+    # --------------------------
+    def on_external_vq(self, msg: Float32) -> None:
+        self.vision_quality_external = float(msg.data)
+        self.vq_ext_last_t = time.time()
+
+    def on_freeze(self, msg: Bool) -> None:
+        self.freeze_flag = bool(msg.data)
+        self.freeze_last_t = time.time()
+
+    def on_freeze_reason(self, msg: String) -> None:
+        self.freeze_reason = str(msg.data)
+        self.freeze_reason_last_t = time.time()
+
+    # --------------------------
+    # Image callback (buffer + optional internal VQ)
     # --------------------------
     def on_raw_image(self, msg: Image) -> None:
+        self.last_img_rx_t = time.time()
         self.image_buf.append(msg)
 
         if msg.width > 0 and msg.height > 0:
             self.image_w = int(msg.width)
             self.image_h = int(msg.height)
 
-        if not bool(self.get_parameter("use_vision_quality").value):
-            self.vision_quality = 1.0
+        if not bool(self.get_parameter("use_internal_vision_quality").value):
             return
         if self.bridge is None or not _HAS_CV:
-            self.vision_quality = 1.0
+            self.vision_quality_internal = 1.0
             return
 
         self.frame_count += 1
@@ -402,11 +517,9 @@ class RiskEvaluatorNode(Node):
 
         try:
             frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
-            self.vision_quality = float(self._compute_vision_quality(frame))
-            self.pub_vq.publish(Float32(data=float(self.vision_quality)))
+            self.vision_quality_internal = float(self._compute_vision_quality(frame))
         except Exception:
-            self.vision_quality = 0.0
-            self.pub_vq.publish(Float32(data=float(self.vision_quality)))
+            self.vision_quality_internal = 0.0
 
     def _compute_vision_quality(self, bgr) -> float:
         gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
@@ -450,45 +563,208 @@ class RiskEvaluatorNode(Node):
         return best
 
     # --------------------------
-    # Detections callback
+    # Detections callback (update tracks; decision also happens here)
     # --------------------------
     def on_detections(self, msg: Detection2DArray) -> None:
+        self.last_det_rx_t = time.time()
+        # Run a full evaluate on detections arrival (fast reaction)
+        self._process_once(det_msg=msg, source="detections_cb")
+
+    # --------------------------
+    # Timer tick (failsafe publishing)
+    # --------------------------
+    def on_tick(self) -> None:
+        # If detections are flowing, timer still helps keep LOST/CAUTION stable.
+        # But we avoid spamming if a detection callback happened very recently.
+        t = time.time()
+        if (t - self.last_det_rx_t) < 0.05:
+            return
+        self._process_once(det_msg=None, source="timer")
+
+    # --------------------------
+    # Core process (shared)
+    # --------------------------
+    def _process_once(self, det_msg: Optional[Detection2DArray], source: str) -> None:
         t0 = time.time()
         t = t0
 
+        # Update mode state machine first (can force STOP)
+        self._update_mode_state(t)
+
         det_dt_ms = None
-        if self.last_det_t is not None:
-            det_dt_ms = float((t - self.last_det_t) * 1000.0)
-        self.last_det_t = t
+        if det_msg is not None:
+            if self.last_det_t is not None:
+                det_dt_ms = float((t - self.last_det_t) * 1000.0)
+            self.last_det_t = t
 
-        dets = self._parse_detections(msg)
-        dets = self._apply_filters(dets)
+        # Parse detections (if any)
+        dets: List[Det] = []
+        if det_msg is not None:
+            dets = self._parse_detections(det_msg)
+            dets = self._apply_filters(dets)
 
-        if bool(self.get_parameter("enable_tracking").value):
-            self._update_tracks(dets, t)
+            if bool(self.get_parameter("enable_tracking").value):
+                self._update_tracks(dets, t)
+            else:
+                self._tracks_from_dets(dets, t)
         else:
-            self._tracks_from_dets(dets, t)
+            # prune stale tracks even without new dets
+            self._prune_tracks(t)
 
+        # Evaluate risk
         overall_risk, top, metrics = self._evaluate(t, det_dt_ms)
-        cmd = self._decide_command(t, overall_risk, top, metrics)
 
+        # Force behavior by mode
+        if self.mode == "LOST_PERCEPTION":
+            cmd = str(self.get_parameter("cmd_stop").value)
+            overall_risk = 1.0
+            metrics["vision_mode"] = "LOST_PERCEPTION"
+            metrics["cmd"] = cmd
+        else:
+            cmd = self._decide_command(t, overall_risk, top, metrics)
+
+            # CAUTION: restrict aggressive turn -> prefer slow/hold
+            if self.mode == "CAUTION":
+                metrics["vision_mode"] = "CAUTION"
+                if cmd.startswith("TURN"):
+                    cmd = str(self.get_parameter("cmd_slow").value)
+                if overall_risk < 0.25:
+                    cmd = str(self.get_parameter("cmd_hold").value)
+                self._maybe_update_cmd(t, cmd, float(self.get_parameter("min_cmd_hold_s").value))
+                cmd = self.last_cmd
+                metrics["cmd"] = cmd
+            else:
+                metrics["vision_mode"] = "NORMAL"
+
+        # finalize metrics
         proc_ms = (time.time() - t0) * 1000.0
         metrics["proc_ms"] = float(proc_ms)
-        if det_dt_ms and det_dt_ms > 1e-6:
-            metrics["fps"] = float(1000.0 / det_dt_ms)
-        else:
-            metrics["fps"] = None
+        metrics["source"] = source
+        metrics["mode"] = self.mode
 
+        # publish
         self.pub_risk.publish(Float32(data=float(overall_risk)))
         self.pub_cmd.publish(String(data=str(cmd)))
+        self.pub_mode.publish(String(data=str(self.mode)))
+
+        # publish vq (current)
+        vq = float(metrics.get("vision_quality", 1.0))
+        self.pub_vq.publish(Float32(data=float(vq)))
 
         try:
             self.pub_metrics.publish(String(data=json.dumps(metrics)))
         except Exception:
             pass
 
+        # debug overlay (if we have a detections stamp, use it for sync; otherwise last image)
         if bool(self.get_parameter("publish_debug_image").value):
-            self._publish_debug_overlay(msg, metrics, top)
+            self._publish_debug_overlay(det_msg, metrics, top)
+
+    # --------------------------
+    # Mode state machine
+    # --------------------------
+    def _get_vq(self, t: float) -> Tuple[float, str]:
+        use_ext = bool(self.get_parameter("use_external_vision_quality").value)
+        ext_timeout = float(self.get_parameter("external_vq_timeout_s").value)
+
+        if use_ext and (t - self.vq_ext_last_t) <= ext_timeout and self.vq_ext_last_t > 0.0:
+            return float(self.vision_quality_external), "external"
+        # fallback internal
+        return float(self.vision_quality_internal), "internal"
+
+    def _get_freeze(self, t: float) -> Tuple[bool, str, str]:
+        use_fr = bool(self.get_parameter("use_freeze_detector").value)
+        fr_timeout = float(self.get_parameter("freeze_timeout_s").value)
+        if (not use_fr) or (self.freeze_last_t <= 0.0) or ((t - self.freeze_last_t) > fr_timeout):
+            return False, "unknown", "stale_or_disabled"
+        reason = "unknown"
+        if self.freeze_reason_last_t > 0.0 and (t - self.freeze_reason_last_t) <= fr_timeout:
+            reason = str(self.freeze_reason)
+        return bool(self.freeze_flag), str(reason), "ok"
+
+    def _update_mode_state(self, t: float) -> None:
+        vq, vq_src = self._get_vq(t)
+        freeze, freeze_reason, freeze_src = self._get_freeze(t)
+
+        image_timeout_s = float(self.get_parameter("image_timeout_s").value)
+        img_age = (t - self.last_img_rx_t) if (self.last_img_rx_t > 0.0) else 999.0
+
+        vq_caution_enter = float(self.get_parameter("vq_caution_enter").value)
+        vq_caution_exit = float(self.get_parameter("vq_caution_exit").value)
+
+        lost_dark_vq = float(self.get_parameter("lost_dark_vq").value)
+        lost_dark_hold = float(self.get_parameter("lost_dark_freeze_hold_s").value)
+
+        lost_min_hold = float(self.get_parameter("lost_min_hold_s").value)
+        recover_vq = float(self.get_parameter("recover_vq").value)
+        recover_ok_hold = float(self.get_parameter("recover_ok_hold_s").value)
+
+        freeze_timeout = (str(freeze_reason).strip().lower() == "timeout")
+
+        # Decide LOST trigger
+        lost_trigger = False
+
+        # 1) No image
+        if img_age >= image_timeout_s:
+            lost_trigger = True
+
+        # 2) Freeze timeout
+        if freeze_timeout:
+            lost_trigger = True
+
+        # 3) Dark + Freeze hold
+        dark_freeze = (freeze is True) and (vq <= lost_dark_vq) and (not freeze_timeout)
+        if dark_freeze:
+            if self.dark_freeze_since <= 0.0:
+                self.dark_freeze_since = t
+            if (t - self.dark_freeze_since) >= lost_dark_hold:
+                lost_trigger = True
+        else:
+            self.dark_freeze_since = 0.0
+
+        # Transition logic
+        if self.mode == "LOST_PERCEPTION":
+            if self.lost_since <= 0.0:
+                self.lost_since = t
+
+            # minimum hold in LOST
+            if (t - self.lost_since) < lost_min_hold:
+                return
+
+            # recovery conditions
+            ok = (img_age < image_timeout_s) and (not freeze_timeout) and (vq >= recover_vq)
+            if ok:
+                if self.ok_since <= 0.0:
+                    self.ok_since = t
+                if (t - self.ok_since) >= recover_ok_hold:
+                    # recover -> CAUTION dulu kalau vq belum stabil
+                    self.mode = "CAUTION" if vq < vq_caution_exit else "NORMAL"
+                    self.lost_since = 0.0
+                    self.ok_since = 0.0
+            else:
+                self.ok_since = 0.0
+            return
+
+        # not LOST currently
+        if lost_trigger:
+            self.mode = "LOST_PERCEPTION"
+            self.lost_since = t
+            self.ok_since = 0.0
+            return
+
+        # CAUTION hysteresis by VQ
+        if self.mode == "NORMAL":
+            if vq <= vq_caution_enter:
+                self.mode = "CAUTION"
+        elif self.mode == "CAUTION":
+            if vq >= vq_caution_exit:
+                self.mode = "NORMAL"
+
+    def _prune_tracks(self, t: float) -> None:
+        timeout_s = float(self.get_parameter("track_timeout_s").value)
+        dead = [tid for tid, tr in self.tracks.items() if (t - tr.last_t) > timeout_s]
+        for tid in dead:
+            self.tracks.pop(tid, None)
 
     # --------------------------
     # Parse & filter
@@ -640,20 +916,36 @@ class RiskEvaluatorNode(Node):
         w_app = float(self.get_parameter("w_approach").value)
         w_bconst = float(self.get_parameter("w_bearing_const").value)
 
-        use_vq = bool(self.get_parameter("use_vision_quality").value)
-        vq = float(self.vision_quality) if use_vq else 1.0
-        self.pub_vq.publish(Float32(data=float(vq)))
+        # vision health snapshot
+        vq, vq_src = self._get_vq(t)
+        freeze, freeze_reason, freeze_src = self._get_freeze(t)
+        img_age = (t - self.last_img_rx_t) if (self.last_img_rx_t > 0.0) else 999.0
+        det_age = (t - self.last_det_rx_t) if (self.last_det_rx_t > 0.0) else 999.0
 
         metrics: dict = {
             "ts": t,
             "status": "no_detections" if not self.tracks else "ok",
             "risk": 0.0,
             "cmd": str(self.last_cmd),
+            "mode": self.mode,
             "vision_quality": float(vq),
+            "vq_source": str(vq_src),
+            "freeze": bool(freeze),
+            "freeze_reason": _ascii_safe(str(freeze_reason)),
+            "freeze_source": str(freeze_src),
+            "img_age_s": float(img_age),
+            "det_age_s": float(det_age),
             "num_tracks": int(len(self.tracks)),
             "det_dt_ms": det_dt_ms,
             "avoid_mode": bool(self.avoid_mode),
         }
+
+        # If detections are stale for long time, treat as no target but keep state (important for timer mode)
+        det_stale_s = float(self.get_parameter("detections_stale_s").value)
+        if det_age > det_stale_s and self.mode != "LOST_PERCEPTION":
+            # prune tracks to avoid ghost commands
+            self.tracks.clear()
+            metrics["status"] = "detections_stale_cleared"
 
         if not self.tracks:
             return 0.0, None, metrics
@@ -688,6 +980,8 @@ class RiskEvaluatorNode(Node):
                 w_bconst * bearing_const
             )
             raw = clamp(raw * (0.55 + 0.45 * conf), 0.0, 1.0)
+
+            # vq scales risk (same style as your previous logic)
             raw = clamp(raw * (0.5 + 0.5 * vq), 0.0, 1.0)
 
             alpha = 0.35
@@ -828,8 +1122,9 @@ class RiskEvaluatorNode(Node):
         prefer_starboard = bool(self.get_parameter("prefer_starboard").value)
         emergency_turn_away = bool(self.get_parameter("emergency_turn_away").value)
 
+        # Legacy: vq_min as a minimum safety; if under this, never turn aggressively
         vq_min = float(self.get_parameter("vq_min").value)
-        vq = float(self.vision_quality)
+        vq, _ = self._get_vq(t)
 
         if not self.avoid_mode and risk >= enter_r:
             self.avoid_mode = True
@@ -839,14 +1134,13 @@ class RiskEvaluatorNode(Node):
         situation = str(metrics.get("situation", "UNKNOWN"))
         metrics["colregs"] = self._colregs_hint(situation)
 
-        if bool(self.get_parameter("use_vision_quality").value) and (vq < vq_min):
-            metrics["vision_mode"] = "CAUTION"
+        # If vq is too low, force caution-like behavior even in NORMAL (extra safety)
+        if vq < vq_min:
             desired = cmd_slow if risk > 0.25 else cmd_hold
             self._maybe_update_cmd(t, desired, hold_s)
             metrics["cmd"] = self.last_cmd
+            metrics["vision_guard"] = "vq_below_vq_min"
             return self.last_cmd
-
-        metrics["vision_mode"] = "NORMAL"
 
         if top is None:
             self._maybe_update_cmd(t, cmd_hold, hold_s)
@@ -965,9 +1259,6 @@ class RiskEvaluatorNode(Node):
         return int(tw), int(thh)
 
     def _fit_text(self, text: str, max_px: int, scale: float, thickness: int) -> str:
-        """
-        Ensure text width <= max_px by trimming and adding '...'.
-        """
         font = self._font()
         th = max(1, thickness)
         s = _ascii_safe(text)
@@ -981,7 +1272,6 @@ class RiskEvaluatorNode(Node):
         if ew >= max_px:
             return ""
 
-        # binary search length
         lo, hi = 0, len(s)
         best = ""
         while lo <= hi:
@@ -1078,6 +1368,8 @@ class RiskEvaluatorNode(Node):
         cv2.putText(img, label, (chip_x1 + 6, chip_y2 - 4), font, scale, txtc, thickness, cv2.LINE_AA)
 
     def _draw_bearing_ruler(self, img, top: Optional[Track]) -> None:
+        if np is None:
+            return
         H, W = img.shape[:2]
         hfov = float(self.get_parameter("camera_hfov_deg").value)
         if hfov <= 1e-6:
@@ -1100,7 +1392,6 @@ class RiskEvaluatorNode(Node):
         y2 = y1 + ruler_h
         self._alpha_rect(img, xL, y1, xR, y2, bg, alpha)
 
-        # PORT / STBD tags
         font = self._font()
         thickness = max(1, int(self.get_parameter("overlay_thickness").value))
         scale = 0.40 if font != cv2.FONT_HERSHEY_PLAIN else 0.85
@@ -1108,11 +1399,9 @@ class RiskEvaluatorNode(Node):
         tw_stbd = cv2.getTextSize("STBD", font, scale, thickness)[0][0]
         cv2.putText(img, "STBD", (xR - 8 - tw_stbd, y2 - 10), font, scale, muted, thickness, cv2.LINE_AA)
 
-        # center line
         cx = W // 2
         self._alpha_line(img, (cx, y1 + 6), (cx, y2 - 8), teal, 1, 0.45)
 
-        # ticks & labels
         half = hfov * 0.5
         deg = -int(half // tick_deg) * tick_deg
         if deg < -half:
@@ -1128,12 +1417,11 @@ class RiskEvaluatorNode(Node):
             if major:
                 lab = f"{deg:+d}"
                 tw = cv2.getTextSize(lab, font, scale, thickness)[0][0]
-                lx = clampi(x - tw // 2, xL + 6, xR - 6 - tw)  # clamp so label never cut
+                lx = clampi(x - tw // 2, xL + 6, xR - 6 - tw)
                 cv2.putText(img, lab, (lx, y1 + 20), font, scale, txtc, thickness, cv2.LINE_AA)
 
             deg += tick_deg
 
-        # target marker (triangle + label)
         if top is not None:
             b = float(top.bearing_deg)
             xr = 0.5 + (b / hfov)
@@ -1199,7 +1487,7 @@ class RiskEvaluatorNode(Node):
         ntrk = int(metrics.get("num_tracks", 0))
         avoid = bool(metrics.get("avoid_mode", False))
         situation = _ascii_safe(str(metrics.get("situation", "UNKNOWN")).replace("_", " "))
-        vmode = _ascii_safe(str(metrics.get("vision_mode", "NORMAL")))
+        vmode = _ascii_safe(str(metrics.get("vision_mode", self.mode)))
         colregs = _ascii_safe(str(metrics.get("colregs", "COLREG: --")))
 
         det_dt = metrics.get("det_dt_ms", None)
@@ -1211,11 +1499,16 @@ class RiskEvaluatorNode(Node):
         comp = metrics.get("components", {}) if isinstance(metrics.get("components", None), dict) else {}
         topk = metrics.get("topk", []) if isinstance(metrics.get("topk", None), list) else []
 
-        # lines (raw, will be auto-fit later)
+        # extra health lines
+        freeze = bool(metrics.get("freeze", False))
+        fr = _ascii_safe(str(metrics.get("freeze_reason", "unknown")))
+        img_age = float(metrics.get("img_age_s", 0.0))
+
         lines: List[str] = []
         lines.append(f"CMD: {cmd}")
         lines.append(f"MODE: {vmode}   AVOID: {'ON' if avoid else 'OFF'}")
         lines.append(f"VQ: {vq:.2f}   TRK: {ntrk}   DET: {det_dt_txt}   FPS: {fps_txt}")
+        lines.append(f"IMG_AGE: {img_age:.2f}s   FREEZE: {str(freeze)}   REASON: {fr}")
         lines.append(f"SITUATION: {situation}")
         lines.append(f"{colregs}")
 
@@ -1271,14 +1564,12 @@ class RiskEvaluatorNode(Node):
                 except Exception:
                     continue
 
-        # panel sizing
         header_h = (hAg + baseAg + 10) + 14
         bar_h = int(self.get_parameter("overlay_riskbar_h_px").value)
         body_h = (len(lines) * line_h) + 6
         total_h = pad + header_h + 6 + bar_h + 12 + body_h + pad
         total_h = min(total_h, H - 2 * margin)
 
-        # anchor decision
         anchor = str(self.get_parameter("overlay_anchor").value).lower()
         x_right = W - margin - max_w
         x_left = margin
@@ -1312,16 +1603,13 @@ class RiskEvaluatorNode(Node):
         teal = self._pcolor("overlay_teal_bgr", (180, 200, 0))
         txtc = self._pcolor("overlay_text_bgr", (238, 238, 238))
 
-        # shadow + panel
         self._alpha_rect(img, x1 + 4, y1 + 4, x2 + 4, y2 + 4, (0, 0, 0), 0.18)
         self._alpha_rect(img, x1, y1, x2, y2, panel, alpha_bg)
         cv2.rectangle(img, (x1, y1), (x2, y2), accent, border_th)
 
-        # header strip (maritime vibe)
         strip_h = 6
         cv2.rectangle(img, (x1, y1), (x2, y1 + strip_h), teal, -1)
 
-        # header text
         hx = x1 + pad
         hy = y1 + pad + (hAg + baseAg + 2)
 
@@ -1332,7 +1620,6 @@ class RiskEvaluatorNode(Node):
         (tw_r, _), _ = cv2.getTextSize(risk_txt, font, s_head, th)
         self._put_text(img, risk_txt, x2 - pad - tw_r, hy, s_head, th, txtc, shadow=True)
 
-        # risk bar (full inside)
         bar_w = int(max_w * 0.62)
         bx1 = x1 + pad
         bx2 = bx1 + bar_w
@@ -1349,7 +1636,6 @@ class RiskEvaluatorNode(Node):
         cv2.rectangle(img, (bx1, by1), (bx1 + fill, by2), accent, -1)
         cv2.rectangle(img, (bx1, by1), (bx2, by2), (160, 160, 160), 1)
 
-        # body (AUTO-FIT so nothing overflows)
         avail_w = max(10, (x2 - x1) - 2 * pad)
         cy = by2 + 14 + line_h
         for s in lines:
@@ -1358,14 +1644,21 @@ class RiskEvaluatorNode(Node):
                 self._put_text(img, fitted, hx, cy, s_body, th, txtc, shadow=True)
             cy += line_h
 
-    def _publish_debug_overlay(self, det_msg: Detection2DArray, metrics: dict, top: Optional[Track]) -> None:
+    def _publish_debug_overlay(self, det_msg: Optional[Detection2DArray], metrics: dict, top: Optional[Track]) -> None:
         if not bool(self.get_parameter("overlay_enabled").value):
             return
         if self.bridge is None or not _HAS_CV:
             return
+        if not self.image_buf:
+            return
 
-        det_stamp_sec = _stamp_to_sec(det_msg.header.stamp)
-        img_msg = self._pick_image_for_stamp(det_stamp_sec) if det_stamp_sec > 0 else (self.image_buf[-1] if self.image_buf else None)
+        img_msg: Optional[Image] = None
+        if det_msg is not None:
+            det_stamp_sec = _stamp_to_sec(det_msg.header.stamp)
+            img_msg = self._pick_image_for_stamp(det_stamp_sec) if det_stamp_sec > 0 else (self.image_buf[-1] if self.image_buf else None)
+        else:
+            img_msg = self.image_buf[-1]
+
         if img_msg is None:
             return
 
