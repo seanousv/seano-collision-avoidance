@@ -3,57 +3,98 @@ import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, OpaqueFunction
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
-from launch_ros.parameter_descriptions import ParameterValue
+
+
+def _launch_setup(context, *args, **kwargs):
+    pkg_share = get_package_share_directory("seano_vision")
+
+    cfg_in = LaunchConfiguration("cfg").perform(context).strip()
+    node_name = LaunchConfiguration("node_name").perform(context).strip()
+
+    # Resolve cfg path:
+    # - if absolute and exists -> use it
+    # - else try: <pkg_share>/config/<cfg_in>
+    if cfg_in and os.path.isabs(cfg_in) and os.path.exists(cfg_in):
+        cfg_path = cfg_in
+    else:
+        cfg_try = os.path.join(pkg_share, "config", cfg_in) if cfg_in else ""
+        cfg_path = cfg_try if cfg_try and os.path.exists(cfg_try) else cfg_in
+
+    # Optional overrides: only applied if user provides non-empty argument.
+    overrides = {}
+
+    def add_if(name, cast=None):
+        val = LaunchConfiguration(name).perform(context)
+        if val is None:
+            return
+        s = str(val).strip()
+        if s == "":
+            return
+        if cast is not None:
+            try:
+                overrides[name] = cast(s)
+            except Exception:
+                overrides[name] = s
+        else:
+            overrides[name] = s
+
+    # Common params (match camera_node.py)
+    add_if("source")
+    add_if("backend")
+    add_if("device_index", int)
+    add_if("device_path")
+    add_if("device_fourcc")
+    add_if("device_width", int)
+    add_if("device_height", int)
+    add_if("device_fps", int)
+    add_if("url")
+    add_if("pipeline")
+
+    params = []
+    if cfg_path:
+        params.append(cfg_path)
+    if overrides:
+        params.append(overrides)
+
+    return [
+        Node(
+            package="seano_vision",
+            executable="camera_node",
+            name=node_name if node_name else "camera_hp",
+            output="screen",
+            parameters=params,
+        )
+    ]
 
 
 def generate_launch_description():
     pkg_share = get_package_share_directory("seano_vision")
     default_cfg = os.path.join(pkg_share, "config", "camera_hp_rtsp.yaml")
 
-    return LaunchDescription([
-        # config base (tetap pakai YAML kamu)
-        DeclareLaunchArgument(
-            "cfg",
-            default_value=default_cfg,
-            description="Base YAML config for camera node",
-        ),
+    return LaunchDescription(
+        [
+            DeclareLaunchArgument(
+                "cfg",
+                default_value=default_cfg,
+                description="YAML param file path (absolute) or filename in seano_vision/config/",
+            ),
+            DeclareLaunchArgument("node_name", default_value="camera_hp"),
 
-        # yang sering berubah kita jadiin launch-arg
-        DeclareLaunchArgument(
-            "url",
-            default_value="rtsp://192.168.1.3:8080/h264.sdp",
-            description="RTSP URL",
-        ),
-        DeclareLaunchArgument("swap_rb", default_value="true", description="Swap R/B channels"),
-        DeclareLaunchArgument("gstreamer_latency_ms", default_value="120", description="GStreamer latency (ms)"),
-        DeclareLaunchArgument("rtsp_tcp", default_value="true", description="RTSP over TCP"),
-        DeclareLaunchArgument("max_fps", default_value="15.0", description="Publish FPS limit"),
-        DeclareLaunchArgument("max_age_ms", default_value="120", description="Drop frames older than this"),
-        DeclareLaunchArgument("publish_best_effort", default_value="true"),
-        DeclareLaunchArgument("publish_reliable", default_value="true"),
-        DeclareLaunchArgument("node_name", default_value="camera_hp"),
+            # Optional overrides (prove-empty by default so YAML is not overridden)
+            DeclareLaunchArgument("source", default_value=""),
+            DeclareLaunchArgument("backend", default_value=""),
+            DeclareLaunchArgument("device_index", default_value=""),
+            DeclareLaunchArgument("device_path", default_value=""),
+            DeclareLaunchArgument("device_fourcc", default_value=""),
+            DeclareLaunchArgument("device_width", default_value=""),
+            DeclareLaunchArgument("device_height", default_value=""),
+            DeclareLaunchArgument("device_fps", default_value=""),
+            DeclareLaunchArgument("url", default_value=""),
+            DeclareLaunchArgument("pipeline", default_value=""),
 
-        Node(
-            package="seano_vision",
-            executable="camera_node",
-            name=LaunchConfiguration("node_name"),
-            output="screen",
-            emulate_tty=True,
-            parameters=[
-                LaunchConfiguration("cfg"),
-                {
-                    "url": LaunchConfiguration("url"),
-                    "swap_rb": ParameterValue(LaunchConfiguration("swap_rb"), value_type=bool),
-                    "gstreamer_latency_ms": ParameterValue(LaunchConfiguration("gstreamer_latency_ms"), value_type=int),
-                    "rtsp_tcp": ParameterValue(LaunchConfiguration("rtsp_tcp"), value_type=bool),
-                    "max_fps": ParameterValue(LaunchConfiguration("max_fps"), value_type=float),
-                    "max_age_ms": ParameterValue(LaunchConfiguration("max_age_ms"), value_type=int),
-                    "publish_best_effort": ParameterValue(LaunchConfiguration("publish_best_effort"), value_type=bool),
-                    "publish_reliable": ParameterValue(LaunchConfiguration("publish_reliable"), value_type=bool),
-                },
-            ],
-        ),
-    ])
+            OpaqueFunction(function=_launch_setup),
+        ]
+    )

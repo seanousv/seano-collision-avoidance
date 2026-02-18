@@ -2,20 +2,27 @@
 # -*- coding: utf-8 -*-
 
 """
-SEANO — Frame Freeze Detector Node
+SEANO — Frame Freeze Detector Node (FINAL)
 
 Tujuan:
-- Deteksi kondisi "freeze" pada stream kamera:
-  frame konten hampir tidak berubah selama N frame berturut-turut.
-- Berguna untuk memicu state LOST PERCEPTION di layer CA.
+- Mendeteksi kondisi "freeze" pada stream kamera, yaitu ketika
+  konten frame hampir tidak berubah selama N frame berturut-turut.
+- Digunakan sebagai indikator LOST PERCEPTION pada sistem
+  collision avoidance berbasis kamera.
+
+Metode:
+- Downsample frame → grayscale
+- Hitung Mean Absolute Difference (MAD) antar frame
+- Jika MAD < threshold selama N frame → freeze = True
+- Tambahan: timeout jika tidak ada frame masuk
 
 Input:
-- /camera/image_raw_reliable (sensor_msgs/Image)
+- /camera/image_raw_synced (sensor_msgs/Image)
 
 Output:
-- /vision/freeze        (std_msgs/Bool)    True jika terdeteksi freeze
-- /vision/freeze_score  (std_msgs/Float32) 0..1, makin tinggi makin "frozen"
-- /vision/freeze_reason (std_msgs/String)  "still" / "timeout" / "init"
+- /vision/freeze        (std_msgs/Bool)
+- /vision/freeze_score  (std_msgs/Float32)  0..1
+- /vision/freeze_reason (std_msgs/String)   init / moving / still / timeout
 """
 
 from __future__ import annotations
@@ -41,8 +48,8 @@ def clamp(x: float, lo: float, hi: float) -> float:
 
 
 @dataclass
-class _FreezeState:
-    prev_gray_small: Optional[np.ndarray] = None
+class FreezeState:
+    prev_gray: Optional[np.ndarray] = None
     still_count: int = 0
     last_mean_diff: float = 999.0
     last_frame_wall: float = 0.0
@@ -51,38 +58,28 @@ class _FreezeState:
 
 
 class FrameFreezeDetectorNode(Node):
-    """
-    Metode deteksi freeze (ringan dan stabil):
-    - Downsample frame -> grayscale
-    - Hitung mean absolute difference (MAD) antara frame sekarang vs sebelumnya
-    - Jika MAD < diff_threshold selama consecutive_frames berturut-turut -> freeze True
-
-    Tambahan:
-    - Timer "no_frame_timeout_s": kalau tidak ada frame masuk selama timeout -> freeze True (reason=timeout)
-      Ini berguna sebagai safety signal sederhana (meski LOST utama tetap lebih cocok di risk evaluator).
-    """
-
     def __init__(self) -> None:
-        super().__init__("frame_freeze_detector")
+        super().__init__("frame_freeze_detector_node")
 
         # ---------- Parameters ----------
-        self.declare_parameter("input_topic", "/camera/image_raw_reliable")
+        self.declare_parameter("input_topic", "/camera/image_raw_synced")
         self.declare_parameter("freeze_topic", "/vision/freeze")
         self.declare_parameter("score_topic", "/vision/freeze_score")
         self.declare_parameter("reason_topic", "/vision/freeze_reason")
 
-        self.declare_parameter("downsample_w", 160)          # makin kecil makin ringan
-        self.declare_parameter("diff_threshold", 2.0)        # MAD threshold (0..255)
-        self.declare_parameter("consecutive_frames", 15)     # jumlah frame berturut2
-        self.declare_parameter("min_dt_s", 0.001)            # ignore duplicate ultra cepat
+        self.declare_parameter("downsample_w", 160)
+        self.declare_parameter("diff_threshold", 2.0)
+        self.declare_parameter("consecutive_frames", 15)
+        self.declare_parameter("min_dt_s", 0.001)
 
-        self.declare_parameter("no_frame_timeout_s", 2.0)    # jika >0, publish freeze=True kalau timeout
-        self.declare_parameter("timer_hz", 5.0)              # frequency cek timeout
+        self.declare_parameter("no_frame_timeout_s", 2.0)
+        self.declare_parameter("timer_hz", 5.0)
 
-        self.input_topic = str(self.get_parameter("input_topic").value)
-        self.freeze_topic = str(self.get_parameter("freeze_topic").value)
-        self.score_topic = str(self.get_parameter("score_topic").value)
-        self.reason_topic = str(self.get_parameter("reason_topic").value)
+        # ---------- Read Parameters ----------
+        self.input_topic = self.get_parameter("input_topic").value
+        self.freeze_topic = self.get_parameter("freeze_topic").value
+        self.score_topic = self.get_parameter("score_topic").value
+        self.reason_topic = self.get_parameter("reason_topic").value
 
         self.downsample_w = int(self.get_parameter("downsample_w").value)
         self.diff_threshold = float(self.get_parameter("diff_threshold").value)
@@ -102,33 +99,31 @@ class FrameFreezeDetectorNode(Node):
 
         # ---------- ROS IO ----------
         self.bridge = CvBridge()
-        self.state = _FreezeState()
+        self.state = FreezeState()
         self.state.last_frame_wall = time.time()
 
-        self.sub = self.create_subscription(Image, self.input_topic, self.on_image, qos_img)
+        self.sub = self.create_subscription(
+            Image, self.input_topic, self.on_image, qos_img
+        )
         self.pub_freeze = self.create_publisher(Bool, self.freeze_topic, 10)
         self.pub_score = self.create_publisher(Float32, self.score_topic, 10)
         self.pub_reason = self.create_publisher(String, self.reason_topic, 10)
 
-        # Timer untuk cek timeout (opsional)
-        if self.timer_hz > 0:
+        if self.timer_hz > 0.0:
             self.create_timer(1.0 / self.timer_hz, self.on_timer)
 
         self.get_logger().info(
-            "[freeze] Ready | "
-            f"in={self.input_topic} thr={self.diff_threshold} N={self.consecutive_frames} "
+            f"[freeze] Ready | in={self.input_topic} "
+            f"thr={self.diff_threshold} N={self.consecutive_frames} "
             f"down_w={self.downsample_w} timeout={self.no_frame_timeout_s}s"
         )
 
     def on_timer(self) -> None:
-        """Jika tidak ada frame masuk terlalu lama -> publish freeze True (reason=timeout)."""
-        if self.no_frame_timeout_s <= 0:
+        if self.no_frame_timeout_s <= 0.0:
             return
 
-        now = time.time()
-        dt = now - self.state.last_frame_wall
-        if dt > self.no_frame_timeout_s:
-            # Only force if not already frozen, biar tidak spam perubahan status
+        dt = time.time() - self.state.last_frame_wall
+        if dt > self.no_frame_timeout_s and not self.state.frozen:
             self._publish(frozen=True, score=1.0, reason="timeout")
 
     def on_image(self, msg: Image) -> None:
@@ -136,41 +131,37 @@ class FrameFreezeDetectorNode(Node):
         dt = now - self.state.last_frame_wall
         self.state.last_frame_wall = now
 
-        # ignore ultra-fast duplicates
         if dt < self.min_dt_s:
             return
 
         try:
             frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
         except Exception as e:
-            self.get_logger().warn(f"[freeze] cv_bridge failed: {e}")
+            self.get_logger().warn(f"[freeze] cv_bridge error: {e}")
             return
 
         h, w = frame.shape[:2]
-        if w <= 0 or h <= 0:
+        if h <= 0 or w <= 0:
             return
 
-        # --- Downsample keep aspect ratio ---
-        target_w = max(48, int(self.downsample_w))
+        target_w = max(48, self.downsample_w)
         target_h = max(36, int(h * (target_w / float(w))))
 
         small = cv2.resize(frame, (target_w, target_h), interpolation=cv2.INTER_AREA)
         gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
 
-        if self.state.prev_gray_small is None:
-            self.state.prev_gray_small = gray
+        if self.state.prev_gray is None:
+            self.state.prev_gray = gray
             self.state.still_count = 0
-            self.state.last_mean_diff = 999.0
             self._publish(frozen=False, score=0.0, reason="init")
             return
 
-        # --- Mean absolute difference ---
-        diff = cv2.absdiff(gray, self.state.prev_gray_small)
+        diff = cv2.absdiff(gray, self.state.prev_gray)
         mean_diff = float(np.mean(diff))
-        self.state.last_mean_diff = mean_diff
-        self.state.prev_gray_small = gray
 
-        # Update still_count
+        self.state.prev_gray = gray
+        self.state.last_mean_diff = mean_diff
+
         if mean_diff < self.diff_threshold:
             self.state.still_count += 1
         else:
@@ -178,34 +169,23 @@ class FrameFreezeDetectorNode(Node):
 
         frozen = self.state.still_count >= self.consecutive_frames
 
-        # Freeze score (0..1):
-        # 1 kalau mean_diff=0 (benar2 diam),
-        # 0 kalau mean_diff >= diff_threshold.
-        base = 1.0 - clamp(mean_diff / max(1e-6, self.diff_threshold), 0.0, 1.0)
-
-        # Kalau belum nyampe N frame, score dinaikkan bertahap sesuai progress still_count
-        progress = clamp(self.state.still_count / max(1.0, float(self.consecutive_frames)), 0.0, 1.0)
+        base = 1.0 - clamp(mean_diff / max(self.diff_threshold, 1e-6), 0.0, 1.0)
+        progress = clamp(
+            self.state.still_count / max(float(self.consecutive_frames), 1.0),
+            0.0, 1.0
+        )
         score = base * progress
 
         reason = "still" if frozen else "moving"
         self._publish(frozen=frozen, score=score, reason=reason)
 
     def _publish(self, frozen: bool, score: float, reason: str) -> None:
-        # publish only if change? (tetap publish terus juga gapapa, tapi biar rapi kita publish tiap callback)
-        self.state.frozen = bool(frozen)
-        self.state.reason = str(reason)
+        self.state.frozen = frozen
+        self.state.reason = reason
 
-        b = Bool()
-        b.data = bool(frozen)
-        self.pub_freeze.publish(b)
-
-        s = Float32()
-        s.data = float(clamp(score, 0.0, 1.0))
-        self.pub_score.publish(s)
-
-        r = String()
-        r.data = str(reason)
-        self.pub_reason.publish(r)
+        self.pub_freeze.publish(Bool(data=frozen))
+        self.pub_score.publish(Float32(data=clamp(score, 0.0, 1.0)))
+        self.pub_reason.publish(String(data=reason))
 
 
 def main(args=None) -> None:

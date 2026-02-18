@@ -22,3 +22,6 @@ Thumbs.db
 *.mp4
 *.avi
 *.zip
+build/
+install/
+log/

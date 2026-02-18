@@ -188,7 +188,7 @@ class RiskEvaluatorNode(Node):
         )
 
         # Topics (core)
-        self.declare_parameter("detections_topic", "/camera/detections")
+        self.declare_parameter("detections_topic", "/camera/detections_filtered")
         self.declare_parameter("image_topic", "/camera/image_raw_reliable")
 
         # Topics (publish)
@@ -708,8 +708,8 @@ class RiskEvaluatorNode(Node):
         if img_age >= image_timeout_s:
             lost_trigger = True
 
-        # 2) Freeze timeout
-        if freeze_timeout:
+        # 2) Freeze timeout (only if image also stale)
+        if freeze_timeout and img_age >= image_timeout_s * 0.7:
             lost_trigger = True
 
         # 3) Dark + Freeze hold
@@ -929,7 +929,7 @@ class RiskEvaluatorNode(Node):
             "cmd": str(self.last_cmd),
             "mode": self.mode,
             "vision_quality": float(vq),
-            "vq_source": str(vq_src),
+            "vision_quality_source": str(vq_src),
             "freeze": bool(freeze),
             "freeze_reason": _ascii_safe(str(freeze_reason)),
             "freeze_source": str(freeze_src),

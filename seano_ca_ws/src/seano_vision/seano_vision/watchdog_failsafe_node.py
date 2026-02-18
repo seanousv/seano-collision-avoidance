@@ -531,6 +531,7 @@ class WatchdogFailsafeNode(Node):
                 "risk": round(float(self.risk), 3),
                 "cmd": self.cmd_in,
                 "vq": None if self.vq is None else round(float(self.vq), 3),
+                "vq_source": "valid" if self._vq_valid()[0] else "stale_or_none",
                 "freeze": None if self.freeze is None else bool(self.freeze),
             },
             "ages_s": {
