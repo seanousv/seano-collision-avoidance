@@ -2,15 +2,39 @@
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
   <name>seano_vision</name>
-  <version>0.0.0</version>
-  <description>TODO: Package description</description>
-  <maintainer email="seanousv@gmail.com">seano</maintainer>
-  <license>TODO: License declaration</license>
+  <version>0.1.0</version>
+  <description>SEANO collision avoidance: perception + risk/decision + safety + actuation bridge (MAVROS RC override for differential thrusters).</description>
 
+  <maintainer email="seanousv@gmail.com">seanousv</maintainer>
+  <license>MIT</license>
+
+  <!-- Core ROS2 Python -->
   <depend>rclpy</depend>
-  <depend>sensor_msgs</depend>
-  <depend>std_msgs</depend>
+  <depend>ament_index_python</depend>
 
+  <!-- Messages -->
+  <depend>std_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>geometry_msgs</depend>
+
+  <!-- Vision -->
+  <depend>cv_bridge</depend>
+
+  <!-- Launch system (because you install/use launch/*.launch.py) -->
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+
+  <!-- MAVROS bridge -->
+  <depend>mavros_msgs</depend>
+
+  <!-- Optional: only keep if you actually use vision_msgs in code -->
+  <exec_depend>vision_msgs</exec_depend>
+
+  <!-- Python runtime deps (system packages) -->
+  <exec_depend>python3-numpy</exec_depend>
+  <exec_depend>python3-opencv</exec_depend>
+
+  <!-- Tests / lint -->
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>
   <test_depend>ament_pep257</test_depend>

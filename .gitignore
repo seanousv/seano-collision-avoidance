@@ -1,27 +1,75 @@
-# ROS 2 build artifacts
+# =========================
+# ROS 2 / colcon artifacts
+# =========================
 **/build/
 **/install/
 **/log/
 
+# (kadang ada di root juga)
+build/
+install/
+log/
 
-# Python
+# =========================
+# Python artifacts
+# =========================
 **/__pycache__/
 *.pyc
+*.pyo
+*.pyd
 .venv/
 venv/
+.env
 
-# OS/editor
+# =========================
+# OS / Editor
+# =========================
 .DS_Store
 Thumbs.db
 .vscode/
 .idea/
 
-# outputs
+# =========================
+# ROS bag / outputs
+# =========================
 *.bag
 *.db3
+*.mcap
 *.mp4
 *.avi
 *.zip
-build/
-install/
-log/
+
+# =========================
+# MAVLink / ArduPilot / SITL logs (penting!)
+# =========================
+*.tlog
+*.bin
+*.raw
+*.log
+*.ulg
+
+# MAVProxy / SITL common outputs
+mav.tlog
+mav.parm
+mav.log
+mavinit.scr
+screenlog.*
+
+# ArduPilot build/cache (kalau suatu saat ada di dalam repo)
+**/ArduRover.elf
+**/ArduCopter.elf
+**/ArduPlane.elf
+**/.waf-*
+**/build/*
+
+# Jika folder ardupilot kamu ada/terlink di repo ini, jangan dipush
+tools/ardupilot/
+ardupilot/
+
+# =========================
+# Node / JS (kalau ada tools)
+# =========================
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
