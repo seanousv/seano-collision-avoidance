@@ -8,7 +8,6 @@ Key vehicle constraint (critical for control design):
 
 ---
 
-````md
 ## Table of Contents
 
 - [Repository Structure](#repository-structure)
@@ -24,6 +23,7 @@ Key vehicle constraint (critical for control design):
 
 ---
 
+````md
 ## Repository Structure
 
 ```text
