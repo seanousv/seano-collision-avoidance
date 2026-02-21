@@ -2,73 +2,138 @@
 # -*- coding: utf-8 -*-
 
 """
-Bridge output Collision Avoidance -> MAVROS RC override (ArduRover skid/differential thrust).
+MAVROS RC Override Bridge untuk SEANO (USV differential thruster) + SITL ArduRover rover-skid.
 
-Input:
-  - /seano/throttle_cmd : std_msgs/Float32 (0.0 .. 1.0)  -> forward throttle demand
-  - /seano/rudder_cmd   : std_msgs/Float32 (-1.0 .. 1.0) -> steering/yaw demand (virtual steer)
+INPUT MODE (parameter: input_mode)
+  1) "thr_steer" (default, kompatibel dengan setup kamu sekarang)
+     - /seano/throttle_cmd : std_msgs/Float32  (0..1 atau -1..1 jika allow_reverse true)
+     - /seano/rudder_cmd   : std_msgs/Float32  (-1..1)
 
-Output:
-  - /mavros/rc/override  : mavros_msgs/OverrideRCIn
+  2) "left_right"
+     - /seano/left_cmd  : std_msgs/Float32 (0..1 atau -1..1 jika allow_reverse true)
+     - /seano/right_cmd : std_msgs/Float32 (0..1 atau -1..1 jika allow_reverse true)
 
-Notes penting (biar tidak bingung):
-- RC override biasanya efektif untuk menggerakkan rover saat mode MANUAL/STEERING/ACRO.
-- Saat GUIDED, autopilot bisa “mengabaikan” RC override karena dia kontrol sendiri.
-  Jadi untuk ngetes node ini: pakai mode MANUAL atau STEERING.
+  3) "twist"
+     - /cmd_vel : geometry_msgs/Twist
+       * linear.x  -> forward velocity
+       * angular.z -> yaw rate
+     (Dinormalisasi via twist_v_max dan twist_yaw_max)
+
+OUTPUT MODE (parameter: output_mode)
+  A) "rc_thr_steer" (default)
+     - publish RC override ke channel steer + throttle (mis. CH1 dan CH3)
+     - cocok untuk SITL rover-skid karena ArduRover akan mixing sendiri
+
+  B) "rc_left_right"
+     - publish RC override ke channel left + right thruster (mis. CH1 dan CH3 atau channel lain)
+     - untuk real USV/manual passthrough yang mapping-nya dibuat sesuai channel input thruster
+
+Catatan penting:
+- RC override paling aman dites pada mode MANUAL/STEERING, ARM.
+- Jika RC override sudah “masuk”, kamu akan lihat /mavros/rc/in berubah (seperti yang sudah berhasil).
 """
 
-from typing import List
+from typing import List, Optional
 
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy, HistoryPolicy
 
 from std_msgs.msg import Float32
+from geometry_msgs.msg import Twist
 from mavros_msgs.msg import OverrideRCIn
 
 
-def clamp(x: float, lo: float, hi: float) -> float:
+def clampf(x: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, x))
+
+
+def clampi(x: int, lo: int, hi: int) -> int:
+    return max(lo, min(hi, x))
+
+
+def sign(x: float) -> float:
+    return 1.0 if x >= 0.0 else -1.0
 
 
 class MavrosRcOverrideBridge(Node):
     def __init__(self):
         super().__init__("mavros_rc_override_bridge_node")
 
-        # Topics
+        # ========= Topics =========
         self.declare_parameter("thr_topic", "/seano/throttle_cmd")
         self.declare_parameter("steer_topic", "/seano/rudder_cmd")
+
+        self.declare_parameter("left_topic", "/seano/left_cmd")
+        self.declare_parameter("right_topic", "/seano/right_cmd")
+
+        self.declare_parameter("cmd_vel_topic", "/cmd_vel")
         self.declare_parameter("out_topic", "/mavros/rc/override")
 
-        # RC channel mapping (1-based)
-        self.declare_parameter("rc_steer_chan", 1)     # CH1 (steering input)
-        self.declare_parameter("rc_throttle_chan", 3)  # CH3 (throttle input)
+        # ========= Mode =========
+        self.declare_parameter("input_mode", "thr_steer")    # thr_steer | left_right | twist
+        self.declare_parameter("output_mode", "rc_thr_steer")  # rc_thr_steer | rc_left_right
 
-        # PWM calibration
+        # ========= RC channel mapping (1-based) =========
+        # output_mode = rc_thr_steer:
+        self.declare_parameter("rc_steer_chan", 1)     # CH1
+        self.declare_parameter("rc_throttle_chan", 3)  # CH3
+
+        # output_mode = rc_left_right:
+        self.declare_parameter("rc_left_chan", 1)      # default CH1
+        self.declare_parameter("rc_right_chan", 3)     # default CH3
+
+        # ========= PWM calibration =========
         self.declare_parameter("pwm_neutral", 1500)
-        self.declare_parameter("pwm_throttle_fwd_max", 1900)  # forward max
-        self.declare_parameter("pwm_throttle_rev_min", 1100)  # reverse min (optional)
+        self.declare_parameter("pwm_fwd_max", 1900)
+        self.declare_parameter("pwm_rev_min", 1100)
         self.declare_parameter("allow_reverse", False)
 
+        # steering endpoints (untuk rc_thr_steer)
         self.declare_parameter("pwm_steer_left", 1100)
         self.declare_parameter("pwm_steer_right", 1900)
 
-        # Scaling + deadband
-        self.declare_parameter("thr_scale", 1.0)         # throttle scale
-        self.declare_parameter("steer_scale", 1.0)       # steer scale
-        self.declare_parameter("thr_deadband", 0.02)     # <= ini dianggap 0
-        self.declare_parameter("steer_deadband", 0.05)
+        # global clamp safety
+        self.declare_parameter("pwm_output_min", 1000)
+        self.declare_parameter("pwm_output_max", 2000)
 
-        # Safety behavior
+        # ========= Scaling + deadband =========
+        self.declare_parameter("thr_scale", 1.0)
+        self.declare_parameter("steer_scale", 1.0)
+
+        self.declare_parameter("left_scale", 1.0)
+        self.declare_parameter("right_scale", 1.0)
+
+        self.declare_parameter("thr_deadband", 0.02)
+        self.declare_parameter("steer_deadband", 0.05)
+        self.declare_parameter("lr_deadband", 0.02)
+
+        # ========= Differential mixer (jika output_mode=rc_left_right dan input_mode=thr_steer/twist) =========
+        # left = thr + steer * diff_mix_gain
+        # right = thr - steer * diff_mix_gain
+        self.declare_parameter("diff_mix_gain", 1.0)
+
+        # ========= Twist normalization =========
+        self.declare_parameter("twist_v_max", 1.0)       # m/s yang dianggap = throttle 1.0
+        self.declare_parameter("twist_yaw_max", 1.0)     # rad/s yang dianggap = steer 1.0
+
+        # ========= Safety behavior =========
         self.declare_parameter("enable", True)
-        self.declare_parameter("command_timeout_s", 0.5)  # jika input stop > ini -> netral
+        self.declare_parameter("command_timeout_s", 0.5)
         self.declare_parameter("pub_hz", 20.0)
         self.declare_parameter("log_period_s", 2.0)
 
-        # Test mode (untuk validasi cepat)
+        # slew-rate limiter (PWM microseconds per second). 0 = off
+        self.declare_parameter("pwm_slew_rate_us_per_s", 0.0)
+
+        # ========= Test mode =========
         self.declare_parameter("test_enable", False)
+        # untuk thr_steer
         self.declare_parameter("test_throttle", 0.20)  # 0..1
         self.declare_parameter("test_steer", 0.0)      # -1..1
+        # untuk left_right (opsional)
+        self.declare_parameter("test_left", 0.20)      # 0..1 atau -1..1 jika reverse
+        self.declare_parameter("test_right", 0.20)     # 0..1 atau -1..1 jika reverse
 
         qos = QoSProfile(
             history=HistoryPolicy.KEEP_LAST,
@@ -79,144 +144,336 @@ class MavrosRcOverrideBridge(Node):
 
         thr_topic = self.get_parameter("thr_topic").value
         steer_topic = self.get_parameter("steer_topic").value
+        left_topic = self.get_parameter("left_topic").value
+        right_topic = self.get_parameter("right_topic").value
+        cmd_vel_topic = self.get_parameter("cmd_vel_topic").value
         out_topic = self.get_parameter("out_topic").value
 
-        self._thr_cmd = 0.0     # 0..1 (atau -1..1 jika reverse diizinkan)
-        self._steer_cmd = 0.0   # -1..1
+        self._thr_cmd: float = 0.0
+        self._steer_cmd: float = 0.0
+        self._left_cmd: float = 0.0
+        self._right_cmd: float = 0.0
+        self._twist_last: Optional[Twist] = None
+
         self._last_cmd_time = self.get_clock().now()
         self._last_log_time = self.get_clock().now()
 
+        # last published PWM for slew limiter
+        self._last_pwm_steer = int(self.get_parameter("pwm_neutral").value)
+        self._last_pwm_thr = int(self.get_parameter("pwm_neutral").value)
+        self._last_pwm_left = int(self.get_parameter("pwm_neutral").value)
+        self._last_pwm_right = int(self.get_parameter("pwm_neutral").value)
+
+        # Subscriptions (kita subscribe semua; yang dipakai tergantung input_mode)
         self.create_subscription(Float32, thr_topic, self._on_thr, qos)
         self.create_subscription(Float32, steer_topic, self._on_steer, qos)
+        self.create_subscription(Float32, left_topic, self._on_left, qos)
+        self.create_subscription(Float32, right_topic, self._on_right, qos)
+        self.create_subscription(Twist, cmd_vel_topic, self._on_twist, qos)
+
         self.pub = self.create_publisher(OverrideRCIn, out_topic, qos)
 
         hz = float(self.get_parameter("pub_hz").value)
         if hz <= 0.0:
             hz = 20.0
+        self._pub_hz = hz
         self.create_timer(1.0 / hz, self._tick)
 
         self.get_logger().info(
-            f"RC override bridge ready | in: {thr_topic}, {steer_topic} -> out: {out_topic}"
+            f"RC override bridge ready | out: {out_topic} | input_mode={self.get_parameter('input_mode').value} "
+            f"| output_mode={self.get_parameter('output_mode').value}"
         )
-        self.get_logger().info("Untuk ngetes gerak: set mode MANUAL/STEERING, ARM, lalu pakai test_enable.")
+        self.get_logger().info("Tes aman: mode MANUAL/STEERING, ARM, lalu test_enable:=true.")
+
+    # ===================== INPUT CALLBACKS =====================
+
+    def _touch_cmd(self):
+        self._last_cmd_time = self.get_clock().now()
 
     def _on_thr(self, msg: Float32):
         if not bool(self.get_parameter("enable").value):
             return
-
         thr_scale = float(self.get_parameter("thr_scale").value)
         thr_dead = float(self.get_parameter("thr_deadband").value)
         allow_rev = bool(self.get_parameter("allow_reverse").value)
 
         thr = float(msg.data) * thr_scale
-
-        if allow_rev:
-            thr = clamp(thr, -1.0, 1.0)
-        else:
-            thr = clamp(thr, 0.0, 1.0)
-
+        thr = clampf(thr, -1.0, 1.0) if allow_rev else clampf(thr, 0.0, 1.0)
         if abs(thr) < thr_dead:
             thr = 0.0
 
         self._thr_cmd = thr
-        self._last_cmd_time = self.get_clock().now()
+        self._touch_cmd()
 
     def _on_steer(self, msg: Float32):
         if not bool(self.get_parameter("enable").value):
             return
-
         steer_scale = float(self.get_parameter("steer_scale").value)
         steer_dead = float(self.get_parameter("steer_deadband").value)
 
         steer = float(msg.data) * steer_scale
-        steer = clamp(steer, -1.0, 1.0)
-
+        steer = clampf(steer, -1.0, 1.0)
         if abs(steer) < steer_dead:
             steer = 0.0
 
         self._steer_cmd = steer
-        self._last_cmd_time = self.get_clock().now()
+        self._touch_cmd()
 
-    def _build_override(self, pwm_steer: int, pwm_thr: int) -> OverrideRCIn:
+    def _on_left(self, msg: Float32):
+        if not bool(self.get_parameter("enable").value):
+            return
+        scale = float(self.get_parameter("left_scale").value)
+        dead = float(self.get_parameter("lr_deadband").value)
+        allow_rev = bool(self.get_parameter("allow_reverse").value)
+
+        v = float(msg.data) * scale
+        v = clampf(v, -1.0, 1.0) if allow_rev else clampf(v, 0.0, 1.0)
+        if abs(v) < dead:
+            v = 0.0
+
+        self._left_cmd = v
+        self._touch_cmd()
+
+    def _on_right(self, msg: Float32):
+        if not bool(self.get_parameter("enable").value):
+            return
+        scale = float(self.get_parameter("right_scale").value)
+        dead = float(self.get_parameter("lr_deadband").value)
+        allow_rev = bool(self.get_parameter("allow_reverse").value)
+
+        v = float(msg.data) * scale
+        v = clampf(v, -1.0, 1.0) if allow_rev else clampf(v, 0.0, 1.0)
+        if abs(v) < dead:
+            v = 0.0
+
+        self._right_cmd = v
+        self._touch_cmd()
+
+    def _on_twist(self, msg: Twist):
+        if not bool(self.get_parameter("enable").value):
+            return
+        self._twist_last = msg
+        self._touch_cmd()
+
+    # ===================== PWM MAPPING HELPERS =====================
+
+    def _norm_to_pwm(self, x: float) -> int:
+        """
+        Map normalized command to PWM:
+          allow_reverse False: x in [0..1] -> [neutral..fwd_max]
+          allow_reverse True : x in [-1..1] -> [rev_min..fwd_max]
+        """
+        pwm_neu = int(self.get_parameter("pwm_neutral").value)
+        pwm_fwd = int(self.get_parameter("pwm_fwd_max").value)
+        pwm_rev = int(self.get_parameter("pwm_rev_min").value)
+        allow_rev = bool(self.get_parameter("allow_reverse").value)
+
+        if allow_rev:
+            x = clampf(x, -1.0, 1.0)
+            if x >= 0.0:
+                pwm = int(pwm_neu + x * (pwm_fwd - pwm_neu))
+            else:
+                pwm = int(pwm_neu + x * (pwm_neu - pwm_rev))  # x negatif
+        else:
+            x = clampf(x, 0.0, 1.0)
+            pwm = int(pwm_neu + x * (pwm_fwd - pwm_neu))
+
+        return pwm
+
+    def _steer_to_pwm(self, steer: float) -> int:
+        pwm_neu = int(self.get_parameter("pwm_neutral").value)
+        pwm_left = int(self.get_parameter("pwm_steer_left").value)
+        pwm_right = int(self.get_parameter("pwm_steer_right").value)
+
+        steer = clampf(steer, -1.0, 1.0)
+        if steer >= 0.0:
+            pwm = int(pwm_neu + steer * (pwm_right - pwm_neu))
+        else:
+            pwm = int(pwm_neu + (-steer) * (pwm_neu - pwm_left))
+
+        return pwm
+
+    def _apply_slew(self, target_pwm: int, last_pwm: int) -> int:
+        rate = float(self.get_parameter("pwm_slew_rate_us_per_s").value)
+        if rate <= 0.0:
+            return target_pwm
+
+        max_step = int(rate / self._pub_hz)  # us per tick
+        if max_step <= 0:
+            return target_pwm
+
+        delta = target_pwm - last_pwm
+        if abs(delta) <= max_step:
+            return target_pwm
+        return last_pwm + int(sign(delta) * max_step)
+
+    def _global_pwm_clamp(self, pwm: int) -> int:
+        lo = int(self.get_parameter("pwm_output_min").value)
+        hi = int(self.get_parameter("pwm_output_max").value)
+        return clampi(pwm, lo, hi)
+
+    # ===================== RC OVERRIDE BUILD =====================
+
+    def _build_override(self, ch_pwm_pairs: List[tuple]) -> OverrideRCIn:
+        """
+        ch_pwm_pairs: list of (channel_1based, pwm)
+        """
         msg = OverrideRCIn()
         channels: List[int] = [0] * 18
 
-        ch_steer = int(self.get_parameter("rc_steer_chan").value) - 1
-        ch_thr = int(self.get_parameter("rc_throttle_chan").value) - 1
-
-        if 0 <= ch_steer < 18:
-            channels[ch_steer] = int(pwm_steer)
-        if 0 <= ch_thr < 18:
-            channels[ch_thr] = int(pwm_thr)
+        for ch_1b, pwm in ch_pwm_pairs:
+            idx = int(ch_1b) - 1
+            if 0 <= idx < 18:
+                channels[idx] = int(pwm)
 
         msg.channels = channels
         return msg
 
+    def _publish_neutral(self):
+        pwm_neu = int(self.get_parameter("pwm_neutral").value)
+        out_mode = str(self.get_parameter("output_mode").value).strip()
+
+        if out_mode == "rc_left_right":
+            chL = int(self.get_parameter("rc_left_chan").value)
+            chR = int(self.get_parameter("rc_right_chan").value)
+            self.pub.publish(self._build_override([(chL, pwm_neu), (chR, pwm_neu)]))
+        else:
+            chS = int(self.get_parameter("rc_steer_chan").value)
+            chT = int(self.get_parameter("rc_throttle_chan").value)
+            self.pub.publish(self._build_override([(chS, pwm_neu), (chT, pwm_neu)]))
+
+    # ===================== MAIN TICK =====================
+
     def _tick(self):
         if not bool(self.get_parameter("enable").value):
-            # kalau disable, kirim netral biar aman
-            pwm_neu = int(self.get_parameter("pwm_neutral").value)
-            self.pub.publish(self._build_override(pwm_neu, pwm_neu))
+            self._publish_neutral()
             return
 
         now = self.get_clock().now()
 
-        # Test mode override
+        # Failsafe timeout (tidak berlaku untuk test_enable)
         test_enable = bool(self.get_parameter("test_enable").value)
-        if test_enable:
-            thr = float(self.get_parameter("test_throttle").value)
-            steer = float(self.get_parameter("test_steer").value)
-            thr = clamp(thr, 0.0, 1.0)
-            steer = clamp(steer, -1.0, 1.0)
-        else:
-            thr = self._thr_cmd
-            steer = self._steer_cmd
-
-        # Timeout failsafe (kalau input mati)
         timeout_s = float(self.get_parameter("command_timeout_s").value)
         dt = (now - self._last_cmd_time).nanoseconds / 1e9
-        if (not test_enable) and (dt > timeout_s):
-            thr = 0.0
-            steer = 0.0
+        timed_out = (not test_enable) and (dt > timeout_s)
 
-        pwm_neu = int(self.get_parameter("pwm_neutral").value)
+        in_mode = str(self.get_parameter("input_mode").value).strip()
+        out_mode = str(self.get_parameter("output_mode").value).strip()
 
-        pwm_fwd = int(self.get_parameter("pwm_throttle_fwd_max").value)
-        pwm_rev = int(self.get_parameter("pwm_throttle_rev_min").value)
+        # ========== Determine normalized commands ==========
+        thr = 0.0
+        steer = 0.0
+        left = 0.0
+        right = 0.0
+
+        if test_enable:
+            # Test values override
+            if in_mode == "left_right":
+                left = float(self.get_parameter("test_left").value)
+                right = float(self.get_parameter("test_right").value)
+            else:
+                thr = float(self.get_parameter("test_throttle").value)
+                steer = float(self.get_parameter("test_steer").value)
+        else:
+            if timed_out:
+                thr = 0.0
+                steer = 0.0
+                left = 0.0
+                right = 0.0
+            else:
+                if in_mode == "left_right":
+                    left = self._left_cmd
+                    right = self._right_cmd
+                elif in_mode == "twist":
+                    if self._twist_last is not None:
+                        v_max = float(self.get_parameter("twist_v_max").value)
+                        yaw_max = float(self.get_parameter("twist_yaw_max").value)
+                        v_max = v_max if v_max > 1e-6 else 1.0
+                        yaw_max = yaw_max if yaw_max > 1e-6 else 1.0
+                        thr = clampf(self._twist_last.linear.x / v_max, -1.0, 1.0)
+                        steer = clampf(self._twist_last.angular.z / yaw_max, -1.0, 1.0)
+                    else:
+                        thr = 0.0
+                        steer = 0.0
+                else:
+                    thr = self._thr_cmd
+                    steer = self._steer_cmd
+
+        # clamp normalized (consistent)
         allow_rev = bool(self.get_parameter("allow_reverse").value)
 
-        pwm_left = int(self.get_parameter("pwm_steer_left").value)
-        pwm_right = int(self.get_parameter("pwm_steer_right").value)
+        if in_mode != "left_right":
+            thr = clampf(thr, -1.0, 1.0) if allow_rev else clampf(thr, 0.0, 1.0)
+            steer = clampf(steer, -1.0, 1.0)
 
-        # Throttle mapping
-        if allow_rev and thr < 0.0:
-            # -1..0 -> rev_min..neutral
-            pwm_thr = int(pwm_neu + thr * (pwm_neu - pwm_rev))
-            pwm_thr = clamp(pwm_thr, pwm_rev, pwm_neu)
+        if in_mode == "left_right":
+            left = clampf(left, -1.0, 1.0) if allow_rev else clampf(left, 0.0, 1.0)
+            right = clampf(right, -1.0, 1.0) if allow_rev else clampf(right, 0.0, 1.0)
+
+        # ========== Compute PWM outputs ==========
+        if out_mode == "rc_left_right":
+            # jika input bukan left_right, lakukan mixing
+            if in_mode != "left_right":
+                gain = float(self.get_parameter("diff_mix_gain").value)
+                left = thr + steer * gain
+                right = thr - steer * gain
+                left = clampf(left, -1.0, 1.0) if allow_rev else clampf(left, 0.0, 1.0)
+                right = clampf(right, -1.0, 1.0) if allow_rev else clampf(right, 0.0, 1.0)
+
+            pwm_left = self._norm_to_pwm(left)
+            pwm_right = self._norm_to_pwm(right)
+
+            pwm_left = self._global_pwm_clamp(pwm_left)
+            pwm_right = self._global_pwm_clamp(pwm_right)
+
+            # slew limit
+            pwm_left = self._apply_slew(pwm_left, self._last_pwm_left)
+            pwm_right = self._apply_slew(pwm_right, self._last_pwm_right)
+            self._last_pwm_left = pwm_left
+            self._last_pwm_right = pwm_right
+
+            chL = int(self.get_parameter("rc_left_chan").value)
+            chR = int(self.get_parameter("rc_right_chan").value)
+
+            self.pub.publish(self._build_override([(chL, pwm_left), (chR, pwm_right)]))
+
+            pwm_debug = f"PWM left={pwm_left} right={pwm_right}"
+            cmd_debug = f"cmd left={left:.2f} right={right:.2f}"
+
         else:
-            # 0..1 -> neutral..fwd_max
-            thr = clamp(thr, 0.0, 1.0)
-            pwm_thr = int(pwm_neu + thr * (pwm_fwd - pwm_neu))
-            pwm_thr = clamp(pwm_thr, pwm_neu, pwm_fwd)
+            # rc_thr_steer
+            pwm_thr = self._norm_to_pwm(thr)
+            pwm_steer = self._steer_to_pwm(steer)
 
-        # Steer mapping
-        if steer >= 0.0:
-            pwm_steer = int(pwm_neu + steer * (pwm_right - pwm_neu))
-        else:
-            pwm_steer = int(pwm_neu + (-steer) * (pwm_neu - pwm_left))
-        pwm_steer = clamp(pwm_steer, pwm_left, pwm_right)
+            pwm_thr = self._global_pwm_clamp(pwm_thr)
+            pwm_steer = self._global_pwm_clamp(pwm_steer)
 
-        self.pub.publish(self._build_override(int(pwm_steer), int(pwm_thr)))
+            # slew limit
+            pwm_thr = self._apply_slew(pwm_thr, self._last_pwm_thr)
+            pwm_steer = self._apply_slew(pwm_steer, self._last_pwm_steer)
+            self._last_pwm_thr = pwm_thr
+            self._last_pwm_steer = pwm_steer
+
+            chS = int(self.get_parameter("rc_steer_chan").value)
+            chT = int(self.get_parameter("rc_throttle_chan").value)
+
+            self.pub.publish(self._build_override([(chS, pwm_steer), (chT, pwm_thr)]))
+
+            pwm_debug = f"PWM steer={pwm_steer} thr={pwm_thr}"
+            cmd_debug = f"cmd thr={thr:.2f} steer={steer:.2f}"
 
         # periodic log
         log_period = float(self.get_parameter("log_period_s").value)
-        if log_period > 0:
+        if log_period > 0.0:
             since = (now - self._last_log_time).nanoseconds / 1e9
             if since >= log_period:
                 self._last_log_time = now
-                self.get_logger().info(
-                    f"cmd thr={thr:.2f} steer={steer:.2f} -> PWM steer={int(pwm_steer)} thr={int(pwm_thr)}"
-                )
+                extra = ""
+                if timed_out:
+                    extra = " | FAILSAFE(timeout)->neutral"
+                if test_enable:
+                    extra = " | TEST_MODE"
+                self.get_logger().info(f"{cmd_debug} -> {pwm_debug}{extra}")
 
 
 def main(args=None):

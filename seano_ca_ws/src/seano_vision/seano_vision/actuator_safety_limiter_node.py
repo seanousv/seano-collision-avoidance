@@ -1,20 +1,43 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+"""
+ActuatorSafetyLimiterNode (SEANO)
+
+Input:
+  - /ca/command (std_msgs/String)  : perintah high-level (HOLD/SLOW/STOP/TURN_LEFT/...)
+  - /ca/failsafe_active (std_msgs/Bool) : optional failsafe dari watchdog/quality
+
+Output (recommended / final):
+  - /seano/auto/left_cmd  (std_msgs/Float32) : 0..1 (atau -1..1 jika allow_reverse)
+  - /seano/auto/right_cmd (std_msgs/Float32)
+
+Optional (legacy/debug):
+  - /seano/throttle_cmd (Float32)
+  - /seano/rudder_cmd   (Float32)
+  - /seano/cmd_vel      (geometry_msgs/Twist)
+  - /seano/command_final (String)
+
+Catatan:
+- Node ini sekarang bisa langsung cocok dengan arsitektur kamu:
+  CA -> limiter -> /seano/auto/left/right -> mux -> bridge -> MAVROS.
+- Jadi kamu tidak perlu adapter thr/rud -> left/right lagi kalau publish_left_right=True.
+"""
+
 from __future__ import annotations
+
 import time
 from dataclasses import dataclass
 
 import rclpy
 from rclpy.node import Node
-
 from std_msgs.msg import String, Bool, Float32
 from geometry_msgs.msg import Twist
 
 
 @dataclass
 class ActuatorCmd:
-    throttle: float  # 0..1
+    throttle: float  # 0..1 (atau -1..1 jika reverse)
     rudder: float    # -1..1
 
 
@@ -38,16 +61,22 @@ class ActuatorSafetyLimiterNode(Node):
     def __init__(self) -> None:
         super().__init__("actuator_safety_limiter_node")
 
-        # Topics
+        # ---------- Topics (input) ----------
         self.declare_parameter("command_topic", "/ca/command")
         self.declare_parameter("failsafe_active_topic", "/ca/failsafe_active")
 
+        # ---------- Topics (output) ----------
+        # Final output for your TA architecture:
+        self.declare_parameter("out_left_topic", "/seano/auto/left_cmd")
+        self.declare_parameter("out_right_topic", "/seano/auto/right_cmd")
+
+        # Legacy/debug outputs (optional):
         self.declare_parameter("out_throttle_topic", "/seano/throttle_cmd")
         self.declare_parameter("out_rudder_topic", "/seano/rudder_cmd")
         self.declare_parameter("out_twist_topic", "/seano/cmd_vel")
         self.declare_parameter("out_command_final_topic", "/seano/command_final")
 
-        # Mapping
+        # ---------- Mapping (command -> target thr/rud) ----------
         self.declare_parameter("throttle_hold", 0.35)
         self.declare_parameter("throttle_slow", 0.20)
         self.declare_parameter("throttle_stop", 0.0)
@@ -56,26 +85,38 @@ class ActuatorSafetyLimiterNode(Node):
         self.declare_parameter("rudder_turn_slow", 0.35)
         self.declare_parameter("rudder_turn", 0.55)
 
-        # Safety
+        # ---------- Safety / timing ----------
         self.declare_parameter("command_timeout_s", 1.0)
         self.declare_parameter("failsafe_timeout_s", 2.0)
-
-        # NEW: kalau failsafe topic tidak ada / stale, mau dianggap active atau tidak?
-        # Default true (lebih aman). Untuk testing set false.
+        # kalau failsafe topic tidak ada / stale, dianggap active atau tidak
         self.declare_parameter("failsafe_stale_is_active", True)
 
         self.declare_parameter("loop_hz", 20.0)
+
+        # Slew limiter
         self.declare_parameter("slew_throttle_per_s", 0.8)
         self.declare_parameter("slew_rudder_per_s", 1.5)
+        self.declare_parameter("slew_left_per_s", 0.8)
+        self.declare_parameter("slew_right_per_s", 0.8)
 
-        self.declare_parameter("publish_twist", True)
-        self.declare_parameter("twist_linear_x_scale", 1.0)
-        self.declare_parameter("twist_angular_z_scale", 1.0)
-
-        self.declare_parameter("invert_rudder", False)
+        # Output options
+        self.declare_parameter("publish_left_right", True)    # <- ini yang kamu mau
+        self.declare_parameter("publish_thr_steer", False)    # matikan biar tidak membingungkan
+        self.declare_parameter("publish_twist", False)        # optional
         self.declare_parameter("unknown_command_policy", "HOLD")  # HOLD / STOP
 
-        # State
+        # Differential mix
+        self.declare_parameter("diff_mix_gain", 0.7)
+        self.declare_parameter("allow_reverse", False)
+        self.declare_parameter("invert_rudder", False)
+
+        # If you want this node to switch mux into AUTO automatically:
+        self.declare_parameter("auto_enable_topic", "/seano/auto_enable")
+        self.declare_parameter("auto_enable_on_start", False)
+        self.declare_parameter("auto_enable_keepalive_hz", 1.0)
+        self._pub_auto_enable = self.create_publisher(Bool, self.get_parameter("auto_enable_topic").value, 10)
+
+        # ---------- State ----------
         self.last_cmd_str: str = "HOLD_COURSE"
         self.last_cmd_time: float = 0.0
 
@@ -84,16 +125,24 @@ class ActuatorSafetyLimiterNode(Node):
 
         self.throttle_cmd: float = 0.0
         self.rudder_cmd: float = 0.0
+        self.left_cmd: float = 0.0
+        self.right_cmd: float = 0.0
+
         self._last_tick = time.time()
         self._last_reason_print = 0.0
 
-        # I/O
+        # ---------- I/O ----------
         cmd_topic = self.get_parameter("command_topic").value
         fs_topic = self.get_parameter("failsafe_active_topic").value
 
         self.create_subscription(String, cmd_topic, self._on_command, 10)
         self.create_subscription(Bool, fs_topic, self._on_failsafe, 10)
 
+        # final output pubs
+        self.pub_left = self.create_publisher(Float32, self.get_parameter("out_left_topic").value, 10)
+        self.pub_right = self.create_publisher(Float32, self.get_parameter("out_right_topic").value, 10)
+
+        # optional pubs
         self.pub_thr = self.create_publisher(Float32, self.get_parameter("out_throttle_topic").value, 10)
         self.pub_rud = self.create_publisher(Float32, self.get_parameter("out_rudder_topic").value, 10)
         self.pub_twist = self.create_publisher(Twist, self.get_parameter("out_twist_topic").value, 10)
@@ -103,9 +152,18 @@ class ActuatorSafetyLimiterNode(Node):
         loop_hz = 20.0 if loop_hz <= 0 else loop_hz
         self.create_timer(1.0 / loop_hz, self._on_tick)
 
-        self.get_logger().info(
-            f"Started | cmd={cmd_topic} failsafe={fs_topic} | loop={loop_hz:.1f}Hz"
-        )
+        keep_hz = float(self.get_parameter("auto_enable_keepalive_hz").value)
+        if keep_hz > 0:
+            self.create_timer(1.0 / keep_hz, self._auto_enable_keepalive)
+
+        if bool(self.get_parameter("auto_enable_on_start").value):
+            self._pub_auto_enable.publish(Bool(data=True))
+
+        self.get_logger().info(f"Started | cmd={cmd_topic} failsafe={fs_topic} | loop={loop_hz:.1f}Hz")
+
+    def _auto_enable_keepalive(self):
+        if bool(self.get_parameter("auto_enable_on_start").value):
+            self._pub_auto_enable.publish(Bool(data=True))
 
     def _on_command(self, msg: String) -> None:
         self.last_cmd_str = (msg.data or "").strip()
@@ -128,17 +186,22 @@ class ActuatorSafetyLimiterNode(Node):
 
         if c in ("HOLD", "HOLD_COURSE", "KEEP", "KEEP_COURSE"):
             return ActuatorCmd(thr_hold, rud_hold)
+
         if c in ("SLOW", "SLOW_DOWN", "DECELERATE"):
             return ActuatorCmd(thr_slow, rud_hold)
+
         if c in ("STOP", "BRAKE", "EMERGENCY_STOP"):
             return ActuatorCmd(thr_stop, rud_hold)
 
         if c in ("TURN_LEFT_SLOW", "LEFT_SLOW"):
             return ActuatorCmd(thr_slow, -abs(rud_turn_slow))
+
         if c in ("TURN_RIGHT_SLOW", "RIGHT_SLOW"):
             return ActuatorCmd(thr_slow, abs(rud_turn_slow))
+
         if c in ("TURN_LEFT", "LEFT"):
             return ActuatorCmd(thr_hold, -abs(rud_turn))
+
         if c in ("TURN_RIGHT", "RIGHT"):
             return ActuatorCmd(thr_hold, abs(rud_turn))
 
@@ -167,38 +230,77 @@ class ActuatorSafetyLimiterNode(Node):
         failsafe_active = self.last_failsafe_active or (fs_stale and stale_is_active)
 
         # Final cmd decision
-        reason = "ok"
         final_cmd = self.last_cmd_str if cmd_ok else "STOP"
+        reason = "ok"
         if not cmd_ok:
             reason = f"cmd_timeout({cmd_age:.2f}s)"
         if failsafe_active:
             final_cmd = "STOP"
             reason = "failsafe_true" if self.last_failsafe_active else f"failsafe_stale({fs_age:.2f}s)"
 
-        # Print reason occasionally (biar kamu gampang debug)
+        # Print reason periodically
         if now - self._last_reason_print > 1.0:
             self._last_reason_print = now
             self.get_logger().info(f"final={final_cmd} reason={reason} cmd_age={cmd_age:.2f}s fs_age={fs_age:.2f}s")
 
+        # Map to target thr/rud
         target = self._map_command_to_target(final_cmd)
-
         if bool(self.get_parameter("invert_rudder").value):
             target = ActuatorCmd(target.throttle, -target.rudder)
 
-        self.throttle_cmd = slew_limit(self.throttle_cmd, target.throttle, float(self.get_parameter("slew_throttle_per_s").value), dt)
-        self.rudder_cmd = slew_limit(self.rudder_cmd, target.rudder, float(self.get_parameter("slew_rudder_per_s").value), dt)
+        allow_reverse = bool(self.get_parameter("allow_reverse").value)
 
-        self.throttle_cmd = clamp(self.throttle_cmd, 0.0, 1.0)
+        # Slew thr/rud
+        self.throttle_cmd = slew_limit(
+            self.throttle_cmd, target.throttle, float(self.get_parameter("slew_throttle_per_s").value), dt
+        )
+        self.rudder_cmd = slew_limit(
+            self.rudder_cmd, target.rudder, float(self.get_parameter("slew_rudder_per_s").value), dt
+        )
+
+        # Clamp thr/rud
+        if allow_reverse:
+            self.throttle_cmd = clamp(self.throttle_cmd, -1.0, 1.0)
+        else:
+            self.throttle_cmd = clamp(self.throttle_cmd, 0.0, 1.0)
         self.rudder_cmd = clamp(self.rudder_cmd, -1.0, 1.0)
 
-        self.pub_thr.publish(Float32(data=float(self.throttle_cmd)))
-        self.pub_rud.publish(Float32(data=float(self.rudder_cmd)))
+        # Mix to left/right (final)
+        gain = float(self.get_parameter("diff_mix_gain").value)
+        left_target = self.throttle_cmd + gain * self.rudder_cmd
+        right_target = self.throttle_cmd - gain * self.rudder_cmd
+
+        if allow_reverse:
+            left_target = clamp(left_target, -1.0, 1.0)
+            right_target = clamp(right_target, -1.0, 1.0)
+        else:
+            left_target = clamp(left_target, 0.0, 1.0)
+            right_target = clamp(right_target, 0.0, 1.0)
+
+        # Slew left/right
+        self.left_cmd = slew_limit(
+            self.left_cmd, left_target, float(self.get_parameter("slew_left_per_s").value), dt
+        )
+        self.right_cmd = slew_limit(
+            self.right_cmd, right_target, float(self.get_parameter("slew_right_per_s").value), dt
+        )
+
+        # Publish final command string (debug)
         self.pub_final.publish(String(data=str(final_cmd)))
+
+        # Publish chosen outputs
+        if bool(self.get_parameter("publish_left_right").value):
+            self.pub_left.publish(Float32(data=float(self.left_cmd)))
+            self.pub_right.publish(Float32(data=float(self.right_cmd)))
+
+        if bool(self.get_parameter("publish_thr_steer").value):
+            self.pub_thr.publish(Float32(data=float(self.throttle_cmd)))
+            self.pub_rud.publish(Float32(data=float(self.rudder_cmd)))
 
         if bool(self.get_parameter("publish_twist").value):
             tw = Twist()
-            tw.linear.x = float(self.throttle_cmd) * float(self.get_parameter("twist_linear_x_scale").value)
-            tw.angular.z = float(self.rudder_cmd) * float(self.get_parameter("twist_angular_z_scale").value)
+            tw.linear.x = float(self.throttle_cmd)
+            tw.angular.z = float(self.rudder_cmd)
             self.pub_twist.publish(tw)
 
 
