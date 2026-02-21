@@ -1,25 +1,23 @@
-```md
+````md
 # SEANO Collision Avoidance (ROS 2 Humble) — USV Differential Thruster
 
-This repository contains the **camera-based collision avoidance** module for the SEANO Unmanned Surface Vehicle (USV).  
-The system is developed in **ROS 2 Humble** and validated first in simulation using **ArduPilot SITL (ArduRover rover-skid)**, then ported to the target hardware (**Jetson Orin Nano + CUAV X7+**).
+This repository contains a **camera-based collision avoidance** module for the SEANO USV. The system is developed with **ROS 2 Humble**, validated first in simulation using **ArduPilot SITL (ArduRover rover-skid)**, and designed for deployment on **Jetson Orin Nano + CUAV X7+**.
 
 Key vehicle constraint (critical for control design):
 - SEANO uses **differential thrusters** (left–right) **without a rudder**.
-- Therefore, the preferred internal command format is **left_cmd / right_cmd** (not rudder).
+- Therefore, the preferred internal motion command format is **left_cmd / right_cmd** (not rudder).
 
 ---
 
-## Contents
+## Table of Contents
 
 - [Repository Structure](#repository-structure)
-- [Roadmap (TA Phases)](#roadmap-ta-phases)
-- [Development Environment](#development-environment)
+- [System Overview](#system-overview)
+- [Prerequisites](#prerequisites)
 - [Build (ROS 2 Workspace)](#build-ros-2-workspace)
-- [Control Stack Overview](#control-stack-overview)
 - [AI Environment (WSL x86_64)](#ai-environment-wsl-x86_64)
 - [AI Environment (Jetson aarch64)](#ai-environment-jetson-aarch64)
-- [WSL2 Simulation Runbook (SITL + Mission Planner + MAVROS + SEANO)](#wsl2-simulation-runbook-sitl--mission-planner--mavros--seano)
+- [WSL2 Simulation Runbook](#wsl2-simulation-runbook)
 - [Validation Checklist](#validation-checklist)
 - [Troubleshooting](#troubleshooting)
 - [License](#license)
@@ -28,61 +26,90 @@ Key vehicle constraint (critical for control design):
 
 ## Repository Structure
 
-```
-
+```text
 seano-collision-avoidance/
-├── seano_ca_ws/
+├── seano_ca_ws/                      # ROS 2 workspace (colcon)
 │   └── src/
-│       └── seano_vision/                 # main ROS 2 package (Python)
-│           ├── seano_vision/             # ROS nodes
-│           ├── launch/                   # launch files
-│           ├── config/                   # optional configs
+│       └── seano_vision/             # main ROS 2 package (ament_python)
+│           ├── seano_vision/         # ROS nodes (Python)
+│           ├── launch/               # launch files
+│           ├── config/               # configuration (optional)
+│           ├── resource/             # ament resources
 │           ├── package.xml
 │           ├── setup.py
 │           └── setup.cfg
-├── tools/                                # optional tools (e.g., ardupilot kept separate)
-├── requirements.txt                      # AI deps (WSL safe; Jetson torch is manual)
+├── tools/                            # optional tools (kept separate from ROS workspace)
+├── requirements.txt                  # AI deps (WSL-safe; Jetson torch manual)
 ├── LICENSE
 └── README.md
-
 ````
 
----
+Notes:
 
-## Roadmap (TA Phases)
-
-- **FASE 0 — Baseline / Reproducible Setup**  
-  Runbook, ports, dependencies, and repository hygiene. Must be repeatable for demo and migration.
-
-- **FASE 1 — Mature USV Control (Priority)**  
-  Reliable actuation behavior (forward/turn/stop), consistent over repeated runs, visible in Mission Planner.
-
-- **FASE 2+ — Vision & Avoidance Integration**  
-  Camera pipeline → detection → risk → avoidance command → return-to-path → evaluation → Jetson porting.
-
-This README focuses on closing **FASE 0** and enabling **FASE 1** testing.
+* `seano_ca_ws/` is the ROS 2 workspace built with `colcon`.
+* `seano_vision/` contains the control/vision/bridge nodes used in the pipeline.
+* `tools/` is optional and intended for external tooling (e.g., keeping ArduPilot outside the ROS workspace).
 
 ---
 
-## Development Environment
+## System Overview
 
-- Host OS: Windows
-- Linux: **WSL2 Ubuntu 22.04**
-- ROS 2: **Humble**
-- Autopilot sim: **ArduPilot SITL**
-- Vehicle model: **ArduRover `rover-skid`** (skid steering ≈ differential thrust behavior)
-- MAVLink bridge: **MAVROS2**
-- GCS: **Mission Planner (Windows)**
+The control pipeline is designed to be deterministic and safe:
+
+1. Manual teleoperation (keyboard):
+
+* Publishes: `/seano/manual/left_cmd`, `/seano/manual/right_cmd`
+
+2. Autonomous command source (AI/risk/planner):
+
+* Publishes: `/seano/auto/left_cmd`, `/seano/auto/right_cmd`
+* Toggle commonly used: `/seano/auto_enable` (Bool)
+
+3. Command multiplexer (manual vs auto):
+
+* Outputs: `/seano/selected/left_cmd`, `/seano/selected/right_cmd`
+
+4. Safety limiter + failsafe:
+
+* Enforces timeout, clamps, safe-stop policy
+* Outputs final: `/seano/left_cmd`, `/seano/right_cmd`
+
+5. MAVROS RC override bridge:
+
+* Converts left/right to PWM RC override
+* Publishes: `/mavros/rc/override`
+
+This separation keeps the AI layer focused on “motion intent” while safety and actuation remain robust.
+
+---
+
+## Prerequisites
+
+Host:
+
+* Windows + WSL2 Ubuntu 22.04
+
+WSL:
+
+* ROS 2 Humble
+* MAVROS2 (ROS2 Humble)
+* OpenCV + cv_bridge
+
+Simulator/GCS:
+
+* ArduPilot SITL (ArduRover rover-skid)
+* Mission Planner (Windows)
 
 ---
 
 ## Build (ROS 2 Workspace)
 
-1) Clone:
+1. Clone:
+
 ```bash
 git clone https://github.com/seanousv/seano-collision-avoidance.git
 cd seano-collision-avoidance
-````
+```
 
 2. Install minimal dependencies (WSL):
 
@@ -98,7 +125,7 @@ sudo apt install -y \
   ros-humble-vision-msgs
 ```
 
-3. Build:
+3. Build workspace:
 
 ```bash
 cd seano_ca_ws
@@ -107,49 +134,16 @@ colcon build --symlink-install
 source install/setup.bash
 ```
 
-Expected result:
+Expected output:
 
-* `colcon build` completes successfully.
+* `colcon build` completes without errors.
 * `ros2 pkg list | grep seano_vision` shows `seano_vision`.
-
----
-
-## Control Stack Overview
-
-The control pipeline is designed to be deterministic and safe:
-
-1. Manual teleop (keyboard):
-
-* Publishes:
-  `/seano/manual/left_cmd` (Float32), `/seano/manual/right_cmd` (Float32)
-
-2. Auto command source (from AI / risk / planner):
-
-* Publishes:
-  `/seano/auto/left_cmd`, `/seano/auto/right_cmd`
-  and a toggle (commonly) `/seano/auto_enable` (Bool)
-
-3. Command MUX (manual vs auto):
-
-* Outputs: `/seano/selected/left_cmd`, `/seano/selected/right_cmd`
-
-4. Safety limiter + failsafe:
-
-* Applies timeout, clamp, and safe-stop policy
-* Outputs final: `/seano/left_cmd`, `/seano/right_cmd`
-
-5. MAVROS RC override bridge:
-
-* Converts left/right into PWM RC override
-* Publishes: `/mavros/rc/override`
-
-This separation is intentional: AI only needs to generate motion intent, while the lower layer ensures safe actuation.
 
 ---
 
 ## AI Environment (WSL x86_64)
 
-Use a dedicated Python venv (recommended). Run from repo root:
+Use a dedicated venv to avoid affecting ROS.
 
 ```bash
 cd ~/seano-collision-avoidance
@@ -163,12 +157,11 @@ source .venv_ai/bin/activate
 python -m pip install -U pip setuptools wheel
 python -m pip install --no-cache-dir -r requirements.txt
 
-# verification (expected: TORCH_OK + MODEL_OK)
 python -c "import torch; print('TORCH_OK', torch.__version__)"
 python -c "from ultralytics import YOLO; YOLO('yolov8n.pt'); print('MODEL_OK')"
 ```
 
-Expected result:
+Expected output:
 
 * `TORCH_OK ...`
 * `MODEL_OK`
@@ -177,17 +170,16 @@ Expected result:
 
 ## AI Environment (Jetson aarch64)
 
-Do **not** install `torch` from standard pip wheels on Jetson. The recommended order:
+Do **not** install `torch` from standard pip wheels on Jetson. Recommended order:
 
-1. Install PyTorch/torchvision following NVIDIA/JetPack guidance for your Jetson version.
-2. Create venv and install ultralytics after torch is confirmed working:
+1. Install PyTorch/torchvision according to NVIDIA/JetPack guidance.
+2. Then install ultralytics and the remaining dependencies:
 
 ```bash
 python3 -m venv .venv_ai
 source .venv_ai/bin/activate
 python -m pip install -U pip setuptools wheel
 
-# torch must already be installed & working here:
 python -c "import torch; print('TORCH_OK', torch.__version__)"
 
 pip install ultralytics --no-deps
@@ -198,19 +190,20 @@ python -c "from ultralytics import YOLO; YOLO('yolov8n.pt'); print('MODEL_OK')"
 
 ---
 
-## WSL2 Simulation Runbook (SITL + Mission Planner + MAVROS + SEANO)
+## WSL2 Simulation Runbook
 
 Goal: a repeatable startup procedure that always works.
 
 ### Port Map (Baseline)
 
-* `14550/UDP` : Mission Planner (Windows) listens here
-* `14551/UDP` : MAVROS ↔ SITL (WSL)
-* `5760/TCP`   : MAVProxy/ArduPilot master (internal)
+* `14550/UDP`: Mission Planner (Windows)
+* `14551/UDP`: MAVROS ↔ SITL (WSL)
+* `5760/TCP`: MAVProxy/ArduPilot master (internal)
 
 WSL2 note:
 
-* Windows host IP seen from WSL can change each session. Use the WSL default gateway.
+* Windows host IP seen from WSL changes between sessions.
+* Use the WSL default gateway.
 
 ---
 
@@ -227,22 +220,22 @@ sim_vehicle.py -v Rover -f rover-skid --console --map \
   --out udp:127.0.0.1:14551
 ```
 
-Expected result:
+Expected output:
 
-* MAVProxy console and map open.
-* Output lines show both `14550` (Mission Planner) and `14551` (MAVROS).
+* MAVProxy console/map appears.
+* SITL shows outputs to both `14550` and `14551`.
 
 ---
 
 ### Mission Planner (Windows) — Connect
 
-* Connection type: **UDP**
-* Port: **14550**
-* Click **Connect**
+* Connection type: UDP
+* Port: 14550
+* Click Connect
 
-Expected result:
+Expected output:
 
-* Vehicle status appears normally (mode, parameters, map/track).
+* Vehicle status appears normally (mode/parameters/map).
 
 ---
 
@@ -253,7 +246,7 @@ source /opt/ros/humble/setup.bash
 ros2 launch mavros apm.launch fcu_url:=udp://0.0.0.0:14551@127.0.0.1:14551
 ```
 
-Expected result:
+Expected output:
 
 * `/mavros/state` becomes `connected: true`.
 
@@ -266,7 +259,7 @@ source /opt/ros/humble/setup.bash
 ros2 topic echo /mavros/state
 ```
 
-Expected result:
+Expected output:
 
 * `connected: true`
 * `mode` readable (e.g., MANUAL)
@@ -284,7 +277,7 @@ source install/setup.bash
 ros2 launch seano_vision run_auto_stack.launch.py
 ```
 
-Expected result:
+Expected output:
 
 * Nodes start without fatal errors.
 * Failsafe heartbeat publishes.
@@ -292,8 +285,6 @@ Expected result:
 ---
 
 ## Validation Checklist
-
-Use this as “definition of done” for baseline setup:
 
 1. MAVROS is connected:
 
@@ -313,43 +304,41 @@ ros2 topic hz /ca/failsafe_active
 
 ```bash
 ros2 topic echo /mavros/rc/override
-# PWM values change when teleop/auto is active
+# PWM changes when teleop/auto is active
 ```
 
-4. Vehicle movement is visible in Mission Planner:
-
-* track changes, heading changes according to inputs
+4. Vehicle movement is visible in Mission Planner (map/track changes).
 
 ---
 
 ## Troubleshooting
 
-### 1) Mission Planner “Connect Failed”
+### Mission Planner “Connect Failed”
 
-* Ensure SITL sends UDP to Windows host IP from WSL:
+* Ensure SITL sends to Windows host IP from WSL:
   `WIN_HOST_IP=$(ip route | awk '/default/ {print $3; exit}')`
 * Ensure SITL includes:
   `--out udp:${WIN_HOST_IP}:14550`
 
-### 2) `/mavros/state connected: false`
+### `/mavros/state connected: false`
 
 * Start SITL first.
-* Ensure SITL sends to `udp:127.0.0.1:14551`.
+* Ensure SITL outputs to `udp:127.0.0.1:14551`.
 * Ensure MAVROS uses:
   `udp://0.0.0.0:14551@127.0.0.1:14551`
 * If SITL restarts, restart MAVROS too.
 
-### 3) Vehicle does not move even though PWM is published
+### Vehicle does not move although PWM is published
 
 * Ensure vehicle is **ARMED**.
 * Ensure mode accepts RC override (commonly **MANUAL/STEERING** for testing).
-* Ensure safety limiter is not forcing STOP (look for `FAILSAFE_STOP` logs).
+* Ensure the safety limiter is not forcing STOP (`FAILSAFE_STOP` logs).
 * Ensure there are no duplicate publishers overriding commands:
   `ros2 topic info -v <topic>`
 
-### 4) `install/local_setup.bash not found`
+### `install/local_setup.bash not found`
 
-* Workspace likely not built or wrong path is sourced.
+* Workspace not built or wrong path sourced.
 * Correct file after build:
   `~/seano-collision-avoidance/seano_ca_ws/install/setup.bash`
 
@@ -380,4 +369,4 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 
-````
+---
