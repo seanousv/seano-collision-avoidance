@@ -19,8 +19,6 @@ Key vehicle constraint (critical for control design):
 - [WSL2 Simulation Runbook](#wsl2-simulation-runbook)
 - [Validation Checklist](#validation-checklist)
 - [Troubleshooting](#troubleshooting)
-- [License](#license)
-
 ---
 
 ````md
