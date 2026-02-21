@@ -1,100 +1,164 @@
-# SEANO Collision Avoidance (ROS2 Humble) — USV Differential Thruster
+Berikut versi `README.md` yang lebih profesional, rapi, dan siap kamu **copy-paste utuh**. Ini tetap 1 file saja.
 
-Repo ini berisi modul **collision avoidance berbasis kamera** untuk USV SEANO, dibangun di atas **ROS 2 Humble**. Fokus utama repo: pipeline **perception → decision → safety → actuation** yang bisa diuji dulu di simulasi (**ArduPilot SITL ArduRover rover-skid**) dan nantinya dipindahkan ke hardware (**Jetson Orin Nano + CUAV X7+**).
+Ganti seluruh isi `README.md` (root repo) dengan teks di bawah:
 
-Catatan desain penting:
-- USV SEANO memakai **differential thruster (kiri–kanan)** tanpa rudder.
-- Karena itu kontrol internal yang diprioritaskan adalah **left_cmd / right_cmd**, bukan “rudder”.
-- Untuk simulasi, dipakai **ArduRover rover-skid** agar perilaku skid steering/differential lebih relevan.
+```md
+# SEANO Collision Avoidance (ROS 2 Humble) — USV Differential Thruster
+
+This repository contains the **camera-based collision avoidance** module for the SEANO Unmanned Surface Vehicle (USV).  
+The system is developed in **ROS 2 Humble** and validated first in simulation using **ArduPilot SITL (ArduRover rover-skid)**, then ported to the target hardware (**Jetson Orin Nano + CUAV X7+**).
+
+Key vehicle constraint (critical for control design):
+- SEANO uses **differential thrusters** (left–right) **without a rudder**.
+- Therefore, the preferred internal command format is **left_cmd / right_cmd** (not rudder).
 
 ---
 
-## Struktur Repo
+## Contents
 
+- [Repository Structure](#repository-structure)
+- [Roadmap (TA Phases)](#roadmap-ta-phases)
+- [Development Environment](#development-environment)
+- [Build (ROS 2 Workspace)](#build-ros-2-workspace)
+- [Control Stack Overview](#control-stack-overview)
+- [AI Environment (WSL x86_64)](#ai-environment-wsl-x86_64)
+- [AI Environment (Jetson aarch64)](#ai-environment-jetson-aarch64)
+- [WSL2 Simulation Runbook (SITL + Mission Planner + MAVROS + SEANO)](#wsl2-simulation-runbook-sitl--mission-planner--mavros--seano)
+- [Validation Checklist](#validation-checklist)
+- [Troubleshooting](#troubleshooting)
+- [License](#license)
+
+---
+
+## Repository Structure
+
+```
 
 seano-collision-avoidance/
 ├── seano_ca_ws/
-│ └── src/
-│ └── seano_vision/ # package ROS2 utama (Python)
-│ ├── seano_vision/ # node-node Python
-│ ├── launch/ # launch files
-│ ├── config/ # config kamera/param (jika ada)
-│ ├── package.xml
-│ ├── setup.py
-│ └── setup.cfg
-├── tools/ # opsional (mis. ardupilot dipisah)
-├── requirements.txt # dependency AI (WSL aman; Jetson torch manual)
+│   └── src/
+│       └── seano_vision/                 # main ROS 2 package (Python)
+│           ├── seano_vision/             # ROS nodes
+│           ├── launch/                   # launch files
+│           ├── config/                   # optional configs
+│           ├── package.xml
+│           ├── setup.py
+│           └── setup.cfg
+├── tools/                                # optional tools (e.g., ardupilot kept separate)
+├── requirements.txt                      # AI deps (WSL safe; Jetson torch is manual)
 ├── LICENSE
 └── README.md
 
-
-## Prasyarat (Development / Simulation)
-
-Host:
-- Windows + WSL2 Ubuntu 22.04
-
-WSL:
-- ROS 2 Humble
-- MAVROS2 (ROS2 Humble)
-- OpenCV + cv_bridge
-
-Simulator/GCS:
-- ArduPilot SITL (ArduRover + rover-skid)
-- Mission Planner (Windows)
+````
 
 ---
 
-## Build ROS2 Workspace (WSL)
+## Roadmap (TA Phases)
 
-1) Clone repo:
+- **FASE 0 — Baseline / Reproducible Setup**  
+  Runbook, ports, dependencies, and repository hygiene. Must be repeatable for demo and migration.
+
+- **FASE 1 — Mature USV Control (Priority)**  
+  Reliable actuation behavior (forward/turn/stop), consistent over repeated runs, visible in Mission Planner.
+
+- **FASE 2+ — Vision & Avoidance Integration**  
+  Camera pipeline → detection → risk → avoidance command → return-to-path → evaluation → Jetson porting.
+
+This README focuses on closing **FASE 0** and enabling **FASE 1** testing.
+
+---
+
+## Development Environment
+
+- Host OS: Windows
+- Linux: **WSL2 Ubuntu 22.04**
+- ROS 2: **Humble**
+- Autopilot sim: **ArduPilot SITL**
+- Vehicle model: **ArduRover `rover-skid`** (skid steering ≈ differential thrust behavior)
+- MAVLink bridge: **MAVROS2**
+- GCS: **Mission Planner (Windows)**
+
+---
+
+## Build (ROS 2 Workspace)
+
+1) Clone:
 ```bash
 git clone https://github.com/seanousv/seano-collision-avoidance.git
 cd seano-collision-avoidance
+````
 
-Install paket yang umum dipakai (minimal):
+2. Install minimal dependencies (WSL):
 
+```bash
 sudo apt update
-sudo apt install -y python3-opencv ros-humble-cv-bridge
-sudo apt install -y ros-humble-launch ros-humble-launch-ros
-sudo apt install -y ros-humble-mavros ros-humble-mavros-msgs
-sudo apt install -y ros-humble-vision-msgs
+sudo apt install -y \
+  python3-opencv \
+  ros-humble-cv-bridge \
+  ros-humble-launch \
+  ros-humble-launch-ros \
+  ros-humble-mavros \
+  ros-humble-mavros-msgs \
+  ros-humble-vision-msgs
+```
 
-Build:
+3. Build:
 
+```bash
 cd seano_ca_ws
 source /opt/ros/humble/setup.bash
 colcon build --symlink-install
 source install/setup.bash
+```
 
-Patokan benar:
+Expected result:
 
-colcon build selesai tanpa error.
+* `colcon build` completes successfully.
+* `ros2 pkg list | grep seano_vision` shows `seano_vision`.
 
-ros2 pkg list | grep seano_vision menampilkan package seano_vision.
+---
 
-Stack Kontrol SEANO (Konsep)
+## Control Stack Overview
 
-Tujuan stack ini: jalur kontrol deterministik dan aman.
+The control pipeline is designed to be deterministic and safe:
 
-Input manual: keyboard teleop → /seano/manual/left_cmd, /seano/manual/right_cmd
+1. Manual teleop (keyboard):
 
-Input auto: dari AI/risk/planner → /seano/auto/left_cmd, /seano/auto/right_cmd
+* Publishes:
+  `/seano/manual/left_cmd` (Float32), `/seano/manual/right_cmd` (Float32)
 
-MUX: pilih manual vs auto → /seano/selected/*
+2. Auto command source (from AI / risk / planner):
 
-Safety limiter: timeout + failsafe + clamp → /seano/left_cmd, /seano/right_cmd
+* Publishes:
+  `/seano/auto/left_cmd`, `/seano/auto/right_cmd`
+  and a toggle (commonly) `/seano/auto_enable` (Bool)
 
-Bridge: left/right → PWM RC override → /mavros/rc/override
+3. Command MUX (manual vs auto):
 
-Jalur ini sengaja dibuat “industri style”: input → mux → limiter → bridge → autopilot.
+* Outputs: `/seano/selected/left_cmd`, `/seano/selected/right_cmd`
 
-AI Environment (WSL x86_64)
+4. Safety limiter + failsafe:
 
-Gunakan venv terpisah agar tidak mengganggu ROS2.
+* Applies timeout, clamp, and safe-stop policy
+* Outputs final: `/seano/left_cmd`, `/seano/right_cmd`
 
+5. MAVROS RC override bridge:
+
+* Converts left/right into PWM RC override
+* Publishes: `/mavros/rc/override`
+
+This separation is intentional: AI only needs to generate motion intent, while the lower layer ensures safe actuation.
+
+---
+
+## AI Environment (WSL x86_64)
+
+Use a dedicated Python venv (recommended). Run from repo root:
+
+```bash
 cd ~/seano-collision-avoidance
 
-# Jika pernah error sebelumnya dan mau ulang bersih:
+# if you need a clean reinstall:
 # rm -rf .venv_ai
 
 python3 -m venv .venv_ai
@@ -103,48 +167,60 @@ source .venv_ai/bin/activate
 python -m pip install -U pip setuptools wheel
 python -m pip install --no-cache-dir -r requirements.txt
 
-# Test (patokan: TORCH_OK + MODEL_OK)
+# verification (expected: TORCH_OK + MODEL_OK)
 python -c "import torch; print('TORCH_OK', torch.__version__)"
-python -c "from ultralytics import YOLO; m=YOLO('yolov8n.pt'); print('MODEL_OK')"
+python -c "from ultralytics import YOLO; YOLO('yolov8n.pt'); print('MODEL_OK')"
+```
 
-Patokan benar:
+Expected result:
 
-Muncul TORCH_OK ...
+* `TORCH_OK ...`
+* `MODEL_OK`
 
-Muncul MODEL_OK (download model boleh terjadi sekali)
+---
 
-Catatan:
+## AI Environment (Jetson aarch64)
 
-Jangan jalankan install AI kalau storage WSL/Windows mepet. Torch bisa besar.
+Do **not** install `torch` from standard pip wheels on Jetson. The recommended order:
 
-AI Environment (Jetson / aarch64) — Catatan Penting
+1. Install PyTorch/torchvision following NVIDIA/JetPack guidance for your Jetson version.
+2. Create venv and install ultralytics after torch is confirmed working:
 
-requirements.txt sengaja dibuat agar tidak memaksa install torch via pip pada Jetson.
-Urutan yang benar di Jetson:
+```bash
+python3 -m venv .venv_ai
+source .venv_ai/bin/activate
+python -m pip install -U pip setuptools wheel
 
-Install PyTorch/torchvision dari rekomendasi JetPack/NVIDIA (bukan pip install torch biasa).
+# torch must already be installed & working here:
+python -c "import torch; print('TORCH_OK', torch.__version__)"
 
-Baru install ultralytics dan dependency lainnya.
+pip install ultralytics --no-deps
+pip install -r requirements.txt
 
-WSL2 Runbook (SITL + Mission Planner + MAVROS + SEANO)
+python -c "from ultralytics import YOLO; YOLO('yolov8n.pt'); print('MODEL_OK')"
+```
 
-Bagian ini yang paling penting untuk FASE 0: supaya demo/re-run selalu sama.
+---
 
-Peta Port Baseline
+## WSL2 Simulation Runbook (SITL + Mission Planner + MAVROS + SEANO)
 
-14550/UDP : Mission Planner (Windows) menerima MAVLink
+Goal: a repeatable startup procedure that always works.
 
-14551/UDP : jalur MAVROS ↔ SITL (WSL)
+### Port Map (Baseline)
 
-5760/TCP : master MAVProxy/ArduPilot (internal)
+* `14550/UDP` : Mission Planner (Windows) listens here
+* `14551/UDP` : MAVROS ↔ SITL (WSL)
+* `5760/TCP`   : MAVProxy/ArduPilot master (internal)
 
-Catatan WSL2:
+WSL2 note:
 
-IP Windows host dari sisi WSL2 bisa berubah tiap sesi.
+* Windows host IP seen from WSL can change each session. Use the WSL default gateway.
 
-Cara yang konsisten: ambil default gateway di WSL.
+---
 
-Terminal 1 (WSL) — Start SITL Rover Skid + Out ke MP & MAVROS
+### Terminal 1 (WSL) — Start SITL (Rover Skid) + Outputs
+
+```bash
 cd ~/tools/ardupilot
 
 WIN_HOST_IP=$(ip route | awk '/default/ {print $3; exit}')
@@ -153,122 +229,138 @@ echo "WIN_HOST_IP=$WIN_HOST_IP"
 sim_vehicle.py -v Rover -f rover-skid --console --map \
   --out udp:${WIN_HOST_IP}:14550 \
   --out udp:127.0.0.1:14551
+```
 
-Patokan benar:
+Expected result:
 
-SITL + MAVProxy console/map muncul.
+* MAVProxy console and map open.
+* Output lines show both `14550` (Mission Planner) and `14551` (MAVROS).
 
-Di output terlihat --out udp:...:14550 dan --out udp:127.0.0.1:14551.
+---
 
-Mission Planner (Windows) — Connect
+### Mission Planner (Windows) — Connect
 
-Pilih koneksi UDP
+* Connection type: **UDP**
+* Port: **14550**
+* Click **Connect**
 
-Port 14550
+Expected result:
 
-Connect
+* Vehicle status appears normally (mode, parameters, map/track).
 
-Patokan benar:
+---
 
-Vehicle terlihat normal (mode, parameter, map).
+### Terminal 2 (WSL) — Start MAVROS
 
-Telemetry jalan.
-
-Terminal 2 (WSL) — Start MAVROS2
+```bash
 source /opt/ros/humble/setup.bash
 ros2 launch mavros apm.launch fcu_url:=udp://0.0.0.0:14551@127.0.0.1:14551
+```
 
-Patokan benar:
+Expected result:
 
-/mavros/state menjadi connected: true.
+* `/mavros/state` becomes `connected: true`.
 
-Terminal 3 (WSL) — Monitor State
+---
+
+### Terminal 3 (WSL) — Monitor MAVROS State
+
+```bash
 source /opt/ros/humble/setup.bash
 ros2 topic echo /mavros/state
+```
 
-Patokan benar:
+Expected result:
 
-connected: true
+* `connected: true`
+* `mode` readable (e.g., MANUAL)
+* `armed` reflects current state
 
-mode terbaca (mis. MANUAL)
+---
 
-armed true/false sesuai kondisi
+### Terminal 4 (WSL) — Start SEANO Stack
 
-Terminal 4 (WSL) — Jalankan Stack SEANO
+```bash
 cd ~/seano-collision-avoidance/seano_ca_ws
 source /opt/ros/humble/setup.bash
 source install/setup.bash
 
 ros2 launch seano_vision run_auto_stack.launch.py
+```
 
-Patokan benar:
+Expected result:
 
-Node-node start tanpa error fatal.
+* Nodes start without fatal errors.
+* Failsafe heartbeat publishes.
 
-Failsafe heartbeat publish stabil.
+---
 
-Checklist Validasi Cepat (Patokan “Sudah Benar”)
+## Validation Checklist
 
-MAVROS terhubung:
+Use this as “definition of done” for baseline setup:
 
+1. MAVROS is connected:
+
+```bash
 ros2 topic echo /mavros/state
 # connected: true
+```
 
-Failsafe heartbeat stabil:
+2. Failsafe heartbeat runs:
 
+```bash
 ros2 topic hz /ca/failsafe_active
-# rate stabil (mis. ~10 Hz), data biasanya False saat aman
+# stable rate (e.g., ~10 Hz)
+```
 
-RC override ada:
+3. RC override is being published:
 
+```bash
 ros2 topic echo /mavros/rc/override
-# channel PWM berubah saat teleop / auto command aktif
+# PWM values change when teleop/auto is active
+```
 
-Vehicle benar-benar bergerak (Mission Planner map/track berubah).
+4. Vehicle movement is visible in Mission Planner:
 
-Troubleshooting (Masalah Paling Umum)
+* track changes, heading changes according to inputs
 
-A) Mission Planner “Connect Failed”
+---
 
-Pastikan SITL mengirim ke IP Windows host dari WSL:
-WIN_HOST_IP=$(ip route | awk '/default/ {print $3; exit}')
+## Troubleshooting
 
-Pastikan SITL punya --out udp:${WIN_HOST_IP}:14550
+### 1) Mission Planner “Connect Failed”
 
-B) /mavros/state connected: false
+* Ensure SITL sends UDP to Windows host IP from WSL:
+  `WIN_HOST_IP=$(ip route | awk '/default/ {print $3; exit}')`
+* Ensure SITL includes:
+  `--out udp:${WIN_HOST_IP}:14550`
 
-Pastikan SITL jalan dulu.
+### 2) `/mavros/state connected: false`
 
-Pastikan SITL out ke udp:127.0.0.1:14551.
+* Start SITL first.
+* Ensure SITL sends to `udp:127.0.0.1:14551`.
+* Ensure MAVROS uses:
+  `udp://0.0.0.0:14551@127.0.0.1:14551`
+* If SITL restarts, restart MAVROS too.
 
-Pastikan MAVROS pakai:
-udp://0.0.0.0:14551@127.0.0.1:14551
+### 3) Vehicle does not move even though PWM is published
 
-Jika restart SITL, restart MAVROS (supaya endpoint tidak “nyangkut”).
+* Ensure vehicle is **ARMED**.
+* Ensure mode accepts RC override (commonly **MANUAL/STEERING** for testing).
+* Ensure safety limiter is not forcing STOP (look for `FAILSAFE_STOP` logs).
+* Ensure there are no duplicate publishers overriding commands:
+  `ros2 topic info -v <topic>`
 
-C) Kendaraan tidak bergerak padahal PWM keluar
+### 4) `install/local_setup.bash not found`
 
-Pastikan vehicle ARMED.
+* Workspace likely not built or wrong path is sourced.
+* Correct file after build:
+  `~/seano-collision-avoidance/seano_ca_ws/install/setup.bash`
 
-Pastikan mode menerima RC override (umumnya MANUAL/STEERING saat uji).
+---
 
-Pastikan limiter tidak mengunci STOP (cek log FAILSAFE_STOP).
+## License
 
-Pastikan tidak ada publisher ganda yang menimpa command (ros2 topic info -v ...).
+MIT License (see `LICENSE`).
 
-D) Topic “local_setup.bash not found”
-
-Biasanya karena workspace belum build, atau ada auto-source salah path di ~/.bashrc.
-
-Pastikan yang di-source adalah:
-~/seano-collision-avoidance/seano_ca_ws/install/setup.bash (setelah build)
-
-Kontribusi / Catatan Praktik
-
-Jangan commit build/ install/ log/ colcon.
-
-Untuk demo, usahakan selalu pakai runbook 4 terminal di atas.
-
-License
-
-MIT (lihat file LICENSE).
+````
