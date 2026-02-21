@@ -1,4 +1,3 @@
-````md
 # Contributing Guide — SEANO Collision Avoidance
 
 Thank you for contributing to the SEANO collision avoidance module.  
@@ -196,5 +195,3 @@ Then open a PR into `main`.
 Maintainer email:
 
 * `seanousv@gmail.com`
-
-```
