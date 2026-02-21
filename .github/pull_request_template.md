@@ -1,3 +1,15 @@
+Siap. Yang kamu pakai sekarang memang ada beberapa masalah formatting yang bikin GitHub tampil berantakan:
+
+* Code block ` ```bash ` tidak ditutup (tidak ada ``` penutup), jadi semua setelahnya dianggap masih “kode”.
+* Heading `##Expected Behavior` kurang spasi → harusnya `## Expected Behavior`.
+* Ada `---` ganda tidak perlu.
+
+Ini versi yang sudah saya rapikan dan lebih profesional, tetap ringkas, dan aman dari formatting error.
+
+File: `.github/pull_request_template.md`
+Ganti seluruh isi file dengan ini (copy-paste utuh):
+
+````md
 # Summary
 <!-- Explain what this PR changes and why. Keep it concise. -->
 
@@ -92,3 +104,5 @@ ros2 launch seano_vision run_auto_stack.launch.py
 # Notes for reviewers
 
 *
+
+````
