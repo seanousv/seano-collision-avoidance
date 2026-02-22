@@ -1,0 +1,8 @@
+# Dev tools (format/lint/test)
+black
+ruff
+pytest
+
+# Needed when pytest loads ROS launch-related modules inside venv
+PyYAML
+lark
