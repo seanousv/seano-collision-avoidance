@@ -24,7 +24,7 @@ import time
 
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import Float32, Bool
+from std_msgs.msg import Bool, Float32
 
 
 def clamp(x: float, lo: float, hi: float) -> float:
@@ -54,7 +54,7 @@ class AutoControllerStub(Node):
         self.declare_parameter("turn_timeout_s", 0.25)
 
         # Safety clamps
-        self.declare_parameter("speed_max", 0.60)   # batas aman test
+        self.declare_parameter("speed_max", 0.60)  # batas aman test
         self.declare_parameter("turn_max", 1.00)
         self.declare_parameter("allow_reverse", False)  # default USV test
 
@@ -67,13 +67,21 @@ class AutoControllerStub(Node):
         self.t_turn = 0.0
 
         # Pub/Sub
-        self.pub_left = self.create_publisher(Float32, self.get_parameter("out_left_topic").value, 10)
-        self.pub_right = self.create_publisher(Float32, self.get_parameter("out_right_topic").value, 10)
+        self.pub_left = self.create_publisher(
+            Float32, self.get_parameter("out_left_topic").value, 10
+        )
+        self.pub_right = self.create_publisher(
+            Float32, self.get_parameter("out_right_topic").value, 10
+        )
 
-        self.create_subscription(Float32, self.get_parameter("speed_topic").value, self._cb_speed, 10)
+        self.create_subscription(
+            Float32, self.get_parameter("speed_topic").value, self._cb_speed, 10
+        )
         self.create_subscription(Float32, self.get_parameter("turn_topic").value, self._cb_turn, 10)
 
-        self.pub_auto_enable = self.create_publisher(Bool, self.get_parameter("auto_enable_topic").value, 10)
+        self.pub_auto_enable = self.create_publisher(
+            Bool, self.get_parameter("auto_enable_topic").value, 10
+        )
 
         hz = float(self.get_parameter("rate_hz").value)
         if hz <= 0:
@@ -88,11 +96,15 @@ class AutoControllerStub(Node):
         self._last_log = time.time()
 
         self.get_logger().info("AutoControllerStub ready.")
-        self.get_logger().info("Inputs: desired_speed, desired_turn -> Outputs: /seano/auto/left_cmd, /seano/auto/right_cmd")
+        self.get_logger().info(
+            "Inputs: desired_speed, desired_turn -> Outputs: /seano/auto/left_cmd, /seano/auto/right_cmd"
+        )
 
         if bool(self.get_parameter("auto_enable_on_start").value):
             self.pub_auto_enable.publish(Bool(data=True))
-            self.get_logger().info("auto_enable_on_start=true -> requesting AUTO via /seano/auto_enable")
+            self.get_logger().info(
+                "auto_enable_on_start=true -> requesting AUTO via /seano/auto_enable"
+            )
 
     def _cb_speed(self, msg: Float32):
         self.speed = float(msg.data)

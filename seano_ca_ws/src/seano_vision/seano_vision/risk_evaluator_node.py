@@ -31,27 +31,27 @@ Notes:
 
 from __future__ import annotations
 
+from collections import deque
+from dataclasses import dataclass
 import json
 import math
 import time
-from collections import deque
-from dataclasses import dataclass
 from typing import Deque, Dict, List, Optional, Tuple
 
+from rcl_interfaces.msg import ParameterDescriptor, ParameterType, SetParametersResult
 import rclpy
 from rclpy.node import Node
-from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
 from rclpy.parameter import Parameter
-from rcl_interfaces.msg import ParameterDescriptor, ParameterType, SetParametersResult
-
-from std_msgs.msg import Float32, String, Bool
+from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import Image
+from std_msgs.msg import Bool, Float32, String
 from vision_msgs.msg import Detection2DArray
 
 try:
     import cv2  # type: ignore
-    import numpy as np  # type: ignore
     from cv_bridge import CvBridge  # type: ignore
+    import numpy as np  # type: ignore
+
     _HAS_CV = True
 except Exception:
     cv2 = None
@@ -207,15 +207,14 @@ class RiskEvaluatorNode(Node):
             [""],
             ParameterDescriptor(
                 type=ParameterType.PARAMETER_STRING_ARRAY,
-                description="Whitelist class_id. Empty => allow all"
+                description="Whitelist class_id. Empty => allow all",
             ),
         )
         self.declare_parameter(
             "deny_class_ids",
             [""],
             ParameterDescriptor(
-                type=ParameterType.PARAMETER_STRING_ARRAY,
-                description="Blacklist class_id"
+                type=ParameterType.PARAMETER_STRING_ARRAY, description="Blacklist class_id"
             ),
         )
 
@@ -294,9 +293,9 @@ class RiskEvaluatorNode(Node):
         self.declare_parameter("vq_caution_exit", 0.55)
 
         # LOST triggers
-        self.declare_parameter("image_timeout_s", 2.0)         # no new image received -> LOST
-        self.declare_parameter("lost_dark_vq", 0.25)           # vq low + freeze -> LOST
-        self.declare_parameter("lost_dark_freeze_hold_s", 1.2) # hold duration before LOST
+        self.declare_parameter("image_timeout_s", 2.0)  # no new image received -> LOST
+        self.declare_parameter("lost_dark_vq", 0.25)  # vq low + freeze -> LOST
+        self.declare_parameter("lost_dark_freeze_hold_s", 1.2)  # hold duration before LOST
 
         # Recovery from LOST
         self.declare_parameter("lost_min_hold_s", 1.0)
@@ -337,11 +336,11 @@ class RiskEvaluatorNode(Node):
         self.declare_parameter("overlay_bbox_chip_alpha", 0.36)
 
         # Theme colors (BGR)
-        self.declare_parameter("overlay_bg_bgr", [16, 24, 40])        # deep navy
-        self.declare_parameter("overlay_panel_bgr", [12, 18, 32])     # panel navy
-        self.declare_parameter("overlay_teal_bgr", [180, 200, 0])     # teal accent
-        self.declare_parameter("overlay_grid_bgr", [110, 140, 170])   # steel
-        self.declare_parameter("overlay_text_bgr", [238, 238, 238])   # near white
+        self.declare_parameter("overlay_bg_bgr", [16, 24, 40])  # deep navy
+        self.declare_parameter("overlay_panel_bgr", [12, 18, 32])  # panel navy
+        self.declare_parameter("overlay_teal_bgr", [180, 200, 0])  # teal accent
+        self.declare_parameter("overlay_grid_bgr", [110, 140, 170])  # steel
+        self.declare_parameter("overlay_text_bgr", [238, 238, 238])  # near white
         self.declare_parameter("overlay_muted_bgr", [170, 170, 170])  # muted
 
         # Bearing ruler
@@ -400,21 +399,38 @@ class RiskEvaluatorNode(Node):
 
         self.last_det_t: Optional[float] = None
 
-        self.image_buf: Deque[Image] = deque(maxlen=max(4, int(self.get_parameter("image_buffer_size").value)))
+        self.image_buf: Deque[Image] = deque(
+            maxlen=max(4, int(self.get_parameter("image_buffer_size").value))
+        )
 
         self.add_on_set_parameters_callback(self._on_params)
 
         # pubs
-        self.pub_risk = self.create_publisher(Float32, str(self.get_parameter("risk_topic").value), self.qos)
-        self.pub_cmd = self.create_publisher(String, str(self.get_parameter("command_topic").value), self.qos)
-        self.pub_mode = self.create_publisher(String, str(self.get_parameter("mode_topic").value), self.qos)
-        self.pub_metrics = self.create_publisher(String, str(self.get_parameter("metrics_topic").value), self.qos)
-        self.pub_vq = self.create_publisher(Float32, str(self.get_parameter("vision_quality_topic").value), self.qos)
-        self.pub_dbg = self.create_publisher(Image, str(self.get_parameter("debug_image_topic").value), self.qos)
+        self.pub_risk = self.create_publisher(
+            Float32, str(self.get_parameter("risk_topic").value), self.qos
+        )
+        self.pub_cmd = self.create_publisher(
+            String, str(self.get_parameter("command_topic").value), self.qos
+        )
+        self.pub_mode = self.create_publisher(
+            String, str(self.get_parameter("mode_topic").value), self.qos
+        )
+        self.pub_metrics = self.create_publisher(
+            String, str(self.get_parameter("metrics_topic").value), self.qos
+        )
+        self.pub_vq = self.create_publisher(
+            Float32, str(self.get_parameter("vision_quality_topic").value), self.qos
+        )
+        self.pub_dbg = self.create_publisher(
+            Image, str(self.get_parameter("debug_image_topic").value), self.qos
+        )
 
         # subs
         self.sub_det = self.create_subscription(
-            Detection2DArray, str(self.get_parameter("detections_topic").value), self.on_detections, self.qos
+            Detection2DArray,
+            str(self.get_parameter("detections_topic").value),
+            self.on_detections,
+            self.qos,
         )
         self.sub_img = self.create_subscription(
             Image, str(self.get_parameter("image_topic").value), self.on_raw_image, self.qos
@@ -433,7 +449,10 @@ class RiskEvaluatorNode(Node):
                 Bool, str(self.get_parameter("freeze_topic").value), self.on_freeze, 10
             )
             self.sub_freeze_reason = self.create_subscription(
-                String, str(self.get_parameter("freeze_reason_topic").value), self.on_freeze_reason, 10
+                String,
+                str(self.get_parameter("freeze_reason_topic").value),
+                self.on_freeze_reason,
+                10,
             )
         else:
             self.sub_freeze = None
@@ -538,7 +557,12 @@ class RiskEvaluatorNode(Node):
         std_b = float(gray.std())
         contrast_score = clamp(std_b / 60.0, 0.0, 1.0)
 
-        score = (0.35 * blur_score) + (0.30 * bright_score) + (0.20 * contrast_score) + (0.15 * glare_score)
+        score = (
+            (0.35 * blur_score)
+            + (0.30 * bright_score)
+            + (0.20 * contrast_score)
+            + (0.15 * glare_score)
+        )
         return clamp(score, 0.0, 1.0)
 
     def _pick_image_for_stamp(self, target_stamp_sec: float) -> Optional[Image]:
@@ -699,7 +723,7 @@ class RiskEvaluatorNode(Node):
         recover_vq = float(self.get_parameter("recover_vq").value)
         recover_ok_hold = float(self.get_parameter("recover_ok_hold_s").value)
 
-        freeze_timeout = (str(freeze_reason).strip().lower() == "timeout")
+        freeze_timeout = str(freeze_reason).strip().lower() == "timeout"
 
         # Decide LOST trigger
         lost_trigger = False
@@ -901,7 +925,9 @@ class RiskEvaluatorNode(Node):
     # --------------------------
     # Risk evaluate
     # --------------------------
-    def _evaluate(self, t: float, det_dt_ms: Optional[float]) -> Tuple[float, Optional[Track], dict]:
+    def _evaluate(
+        self, t: float, det_dt_ms: Optional[float]
+    ) -> Tuple[float, Optional[Track], dict]:
         W = float(self.image_w or 1)
         H = float(self.image_h or 1)
         img_area = max(W * H, 1e-9)
@@ -968,16 +994,18 @@ class RiskEvaluatorNode(Node):
             proximity = smoothstep(near_area_ratio * 0.25, near_area_ratio, area_ratio)
             centrality = 1.0 - clamp(abs(x_ratio - 0.5) / max(center_band / 2.0, 1e-6), 0.0, 1.0)
             approach = smoothstep(0.00, 0.55, tr.dlog_area_dt)
-            bearing_const = 1.0 - clamp(abs(tr.bearing_rate_dps) / max(bearing_rate_bad, 1e-6), 0.0, 1.0)
+            bearing_const = 1.0 - clamp(
+                abs(tr.bearing_rate_dps) / max(bearing_rate_bad, 1e-6), 0.0, 1.0
+            )
 
             prox_combo = clamp(0.60 * proximity + 0.40 * bottomness, 0.0, 1.0)
             conf = clamp(tr.score, 0.0, 1.0)
 
             raw = (
-                w_prox * prox_combo +
-                w_center * centrality +
-                w_app * approach +
-                w_bconst * bearing_const
+                w_prox * prox_combo
+                + w_center * centrality
+                + w_app * approach
+                + w_bconst * bearing_const
             )
             raw = clamp(raw * (0.55 + 0.45 * conf), 0.0, 1.0)
 
@@ -1029,7 +1057,9 @@ class RiskEvaluatorNode(Node):
                 ttc_reason = "at_threshold"
             else:
                 if top.dlog_area_dt > 1e-6:
-                    ttc = (math.log(max(a_th, 1e-9)) - math.log(max(area_ratio, 1e-9))) / top.dlog_area_dt
+                    ttc = (
+                        math.log(max(a_th, 1e-9)) - math.log(max(area_ratio, 1e-9))
+                    ) / top.dlog_area_dt
                     ttc = clamp(ttc, 0.0, ttc_max)
                     ttc_proxy = float(ttc)
                     ttc_reason = "ok"
@@ -1046,39 +1076,45 @@ class RiskEvaluatorNode(Node):
         topk_n = max(0, int(self.get_parameter("overlay_show_topk").value))
         topk_list = []
         for i, (r, tr, _c, _f) in enumerate(ranked[:topk_n]):
-            topk_list.append({
-                "rank": i + 1,
-                "track_id": int(tr.tid),
-                "class_id": str(tr.class_id),
-                "score": float(tr.score),
-                "risk": float(clamp(r, 0.0, 1.0)),
-                "bearing_deg": float(tr.bearing_deg),
-            })
+            topk_list.append(
+                {
+                    "rank": i + 1,
+                    "track_id": int(tr.tid),
+                    "class_id": str(tr.class_id),
+                    "score": float(tr.score),
+                    "risk": float(clamp(r, 0.0, 1.0)),
+                    "bearing_deg": float(tr.bearing_deg),
+                }
+            )
 
-        metrics.update({
-            "risk": float(clamp(best, 0.0, 1.0)),
-            "target": {
-                "track_id": int(top.tid),
-                "class_id": str(top.class_id),
-                "score": float(top.score),
-                "x_ratio": float(top_feat["x_ratio"]),
-                "bottom_y_ratio": float(top_feat["bottom_y_ratio"]),
-                "area_ratio": float(top_feat["area_ratio"]),
-                "in_corridor": bool(top_feat["in_corridor"]),
-                "bearing_deg": float(top.bearing_deg),
-                "bearing_rate_dps": float(top.bearing_rate_dps),
-                "dlog_area_dt": float(top.dlog_area_dt),
-                "ttc_proxy_s": ttc_proxy,
-                "ttc_reason": ttc_reason,
-            },
-            "components": top_comp,
-            "situation": situation,
-            "topk": topk_list,
-        })
+        metrics.update(
+            {
+                "risk": float(clamp(best, 0.0, 1.0)),
+                "target": {
+                    "track_id": int(top.tid),
+                    "class_id": str(top.class_id),
+                    "score": float(top.score),
+                    "x_ratio": float(top_feat["x_ratio"]),
+                    "bottom_y_ratio": float(top_feat["bottom_y_ratio"]),
+                    "area_ratio": float(top_feat["area_ratio"]),
+                    "in_corridor": bool(top_feat["in_corridor"]),
+                    "bearing_deg": float(top.bearing_deg),
+                    "bearing_rate_dps": float(top.bearing_rate_dps),
+                    "dlog_area_dt": float(top.dlog_area_dt),
+                    "ttc_proxy_s": ttc_proxy,
+                    "ttc_reason": ttc_reason,
+                },
+                "components": top_comp,
+                "situation": situation,
+                "topk": topk_list,
+            }
+        )
 
         return float(clamp(best, 0.0, 1.0)), top, metrics
 
-    def _classify_situation(self, bearing_deg: float, bearing_rate_dps: float, in_corridor: bool) -> str:
+    def _classify_situation(
+        self, bearing_deg: float, bearing_rate_dps: float, in_corridor: bool
+    ) -> str:
         br = abs(bearing_rate_dps)
         b = bearing_deg
         if in_corridor and abs(b) < 8.0 and br < 2.0:
@@ -1228,7 +1264,9 @@ class RiskEvaluatorNode(Node):
         cv2.line(overlay, p1, p2, bgr, thickness, cv2.LINE_AA)
         img[:] = cv2.addWeighted(overlay, alpha, img, 1.0 - alpha, 0)
 
-    def _dashed_line(self, img, p1, p2, bgr, thickness: int, alpha: float, dash: int = 12, gap: int = 10) -> None:
+    def _dashed_line(
+        self, img, p1, p2, bgr, thickness: int, alpha: float, dash: int = 12, gap: int = 10
+    ) -> None:
         x1, y1 = p1
         x2, y2 = p2
         length = int(math.hypot(x2 - x1, y2 - y1))
@@ -1247,8 +1285,17 @@ class RiskEvaluatorNode(Node):
             self._alpha_line(img, (sx, sy), (ex, ey), bgr, thickness, alpha)
             cur += dash + gap
 
-    def _put_text(self, img, text: str, x: int, y: int, scale: float, thickness: int,
-                  color=(255, 255, 255), shadow: bool = True) -> Tuple[int, int]:
+    def _put_text(
+        self,
+        img,
+        text: str,
+        x: int,
+        y: int,
+        scale: float,
+        thickness: int,
+        color=(255, 255, 255),
+        shadow: bool = True,
+    ) -> Tuple[int, int]:
         font = self._font()
         th = max(1, thickness)
         text = _ascii_safe(text)
@@ -1365,7 +1412,9 @@ class RiskEvaluatorNode(Node):
 
         self._alpha_rect(img, chip_x1, chip_y1, chip_x2, chip_y2, panel, alpha)
         cv2.rectangle(img, (chip_x1, chip_y1), (chip_x2, chip_y2), color, 1)
-        cv2.putText(img, label, (chip_x1 + 6, chip_y2 - 4), font, scale, txtc, thickness, cv2.LINE_AA)
+        cv2.putText(
+            img, label, (chip_x1 + 6, chip_y2 - 4), font, scale, txtc, thickness, cv2.LINE_AA
+        )
 
     def _draw_bearing_ruler(self, img, top: Optional[Track]) -> None:
         if np is None:
@@ -1397,7 +1446,9 @@ class RiskEvaluatorNode(Node):
         scale = 0.40 if font != cv2.FONT_HERSHEY_PLAIN else 0.85
         cv2.putText(img, "PORT", (xL + 8, y2 - 10), font, scale, muted, thickness, cv2.LINE_AA)
         tw_stbd = cv2.getTextSize("STBD", font, scale, thickness)[0][0]
-        cv2.putText(img, "STBD", (xR - 8 - tw_stbd, y2 - 10), font, scale, muted, thickness, cv2.LINE_AA)
+        cv2.putText(
+            img, "STBD", (xR - 8 - tw_stbd, y2 - 10), font, scale, muted, thickness, cv2.LINE_AA
+        )
 
         cx = W // 2
         self._alpha_line(img, (cx, y1 + 6), (cx, y2 - 8), teal, 1, 0.45)
@@ -1410,7 +1461,7 @@ class RiskEvaluatorNode(Node):
         while deg <= half + 1e-6:
             xr = 0.5 + (deg / hfov)
             x = int(clamp(xr, 0.0, 1.0) * (W - 1))
-            major = (deg % (tick_deg * 2) == 0)
+            major = deg % (tick_deg * 2) == 0
             tlen = 16 if major else 10
             self._alpha_line(img, (x, y2 - 8), (x, y2 - 8 - tlen), grid, 1, 0.40)
 
@@ -1496,7 +1547,11 @@ class RiskEvaluatorNode(Node):
         fps_txt = "--" if fps is None else f"{float(fps):.1f}"
 
         tg = metrics.get("target", None) if isinstance(metrics.get("target", None), dict) else None
-        comp = metrics.get("components", {}) if isinstance(metrics.get("components", None), dict) else {}
+        comp = (
+            metrics.get("components", {})
+            if isinstance(metrics.get("components", None), dict)
+            else {}
+        )
         topk = metrics.get("topk", []) if isinstance(metrics.get("topk", None), list) else []
 
         # extra health lines
@@ -1644,7 +1699,9 @@ class RiskEvaluatorNode(Node):
                 self._put_text(img, fitted, hx, cy, s_body, th, txtc, shadow=True)
             cy += line_h
 
-    def _publish_debug_overlay(self, det_msg: Optional[Detection2DArray], metrics: dict, top: Optional[Track]) -> None:
+    def _publish_debug_overlay(
+        self, det_msg: Optional[Detection2DArray], metrics: dict, top: Optional[Track]
+    ) -> None:
         if not bool(self.get_parameter("overlay_enabled").value):
             return
         if self.bridge is None or not _HAS_CV:
@@ -1655,7 +1712,11 @@ class RiskEvaluatorNode(Node):
         img_msg: Optional[Image] = None
         if det_msg is not None:
             det_stamp_sec = _stamp_to_sec(det_msg.header.stamp)
-            img_msg = self._pick_image_for_stamp(det_stamp_sec) if det_stamp_sec > 0 else (self.image_buf[-1] if self.image_buf else None)
+            img_msg = (
+                self._pick_image_for_stamp(det_stamp_sec)
+                if det_stamp_sec > 0
+                else (self.image_buf[-1] if self.image_buf else None)
+            )
         else:
             img_msg = self.image_buf[-1]
 

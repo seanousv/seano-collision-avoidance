@@ -23,16 +23,15 @@ Output:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from collections import deque
+from dataclasses import dataclass, field
 from typing import Deque, Dict, Optional, Tuple
 
 import rclpy
 from rclpy.node import Node
-from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
-
-from vision_msgs.msg import Detection2DArray, Detection2D
+from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
 from std_msgs.msg import Int32
+from vision_msgs.msg import Detection2D, Detection2DArray
 
 
 def det_to_xyxy(det: Detection2D) -> Tuple[float, float, float, float]:
@@ -43,8 +42,7 @@ def det_to_xyxy(det: Detection2D) -> Tuple[float, float, float, float]:
     return cx - w * 0.5, cy - h * 0.5, cx + w * 0.5, cy + h * 0.5
 
 
-def iou_xyxy(a: Tuple[float, float, float, float],
-             b: Tuple[float, float, float, float]) -> float:
+def iou_xyxy(a: Tuple[float, float, float, float], b: Tuple[float, float, float, float]) -> float:
     ax1, ay1, ax2, ay2 = a
     bx1, by1, bx2, by2 = b
     ix1, iy1 = max(ax1, bx1), max(ay1, by1)
@@ -112,12 +110,8 @@ class FalsePositiveGuardNode(Node):
         self.in_topic = self.get_parameter("input_topic").value
         self.out_topic = self.get_parameter("output_topic").value
 
-        self.sub = self.create_subscription(
-            Detection2DArray, self.in_topic, self.on_det, qos
-        )
-        self.pub = self.create_publisher(
-            Detection2DArray, self.out_topic, qos
-        )
+        self.sub = self.create_subscription(Detection2DArray, self.in_topic, self.on_det, qos)
+        self.pub = self.create_publisher(Detection2DArray, self.out_topic, qos)
 
         self.sub_wl = self.create_subscription(
             Int32,
@@ -126,9 +120,7 @@ class FalsePositiveGuardNode(Node):
             10,
         )
 
-        self.get_logger().info(
-            f"[fp_guard] Ready | in={self.in_topic} out={self.out_topic}"
-        )
+        self.get_logger().info(f"[fp_guard] Ready | in={self.in_topic} out={self.out_topic}")
 
     def on_waterline(self, msg: Int32) -> None:
         self._waterline_y = int(msg.data)
@@ -137,17 +129,14 @@ class FalsePositiveGuardNode(Node):
         x1, y1, x2, y2 = bbox
         return max(0.0, x2 - x1) * max(0.0, y2 - y1)
 
-    def _passes_basic_filters(self, det: Detection2D,
-                              score: float,
-                              min_score: float,
-                              min_area: float) -> bool:
+    def _passes_basic_filters(
+        self, det: Detection2D, score: float, min_score: float, min_area: float
+    ) -> bool:
         if score < min_score:
             return False
         return self._area(det_to_xyxy(det)) >= min_area
 
-    def _passes_waterline(self, det: Detection2D,
-                          use_wl: bool,
-                          margin_px: int) -> bool:
+    def _passes_waterline(self, det: Detection2D, use_wl: bool, margin_px: int) -> bool:
         if not use_wl or self._waterline_y is None:
             return True
         _, _, _, y2 = det_to_xyxy(det)

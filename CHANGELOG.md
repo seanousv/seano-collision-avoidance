@@ -7,13 +7,13 @@ This project generally follows the spirit of **Keep a Changelog**, with entries 
 ## [Unreleased]
 
 ### Added
-- 
+-
 
 ### Changed
-- 
+-
 
 ### Fixed
-- 
+-
 
 ---
 

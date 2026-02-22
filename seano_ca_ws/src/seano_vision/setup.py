@@ -1,9 +1,11 @@
-from setuptools import setup, find_packages
-import os
 from glob import glob
+import os
 import sys
 
+from setuptools import find_packages, setup
+
 package_name = "seano_vision"
+
 
 # colcon/ament kadang memanggil setup.py dengan argumen yang tidak didukung
 # oleh distutils/setuptools tertentu. Kita buang argumen tsb agar build lanjut.
@@ -15,11 +17,12 @@ def _strip_flag(flag: str, takes_value: bool = False):
             # buang value setelah flag
             sys.argv.pop(i)
 
+
 def _strip_flag_prefix(prefix: str, takes_value: bool = False):
     # handle bentuk: --flag=value
     new_argv = []
     skip_next = False
-    for i, a in enumerate(sys.argv):
+    for _i, a in enumerate(sys.argv):
         if skip_next:
             skip_next = False
             continue
@@ -32,14 +35,17 @@ def _strip_flag_prefix(prefix: str, takes_value: bool = False):
         new_argv.append(a)
     sys.argv[:] = new_argv
 
+
 # buang argumen yang terbukti bikin error di kamu
 _strip_flag("--editable", takes_value=False)
 _strip_flag("--build-directory", takes_value=True)
 _strip_flag_prefix("--build-directory", takes_value=False)
 
+
 def _files_recursive(folder: str):
     paths = glob(os.path.join(folder, "**", "*"), recursive=True)
     return [p for p in paths if os.path.isfile(p)]
+
 
 setup(
     name=package_name,

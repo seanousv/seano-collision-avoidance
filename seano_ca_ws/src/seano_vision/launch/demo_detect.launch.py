@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
 import os
 
+from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, TimerAction
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
-
-from ament_index_python.packages import get_package_share_directory
 
 
 def generate_launch_description():
@@ -51,31 +50,27 @@ def generate_launch_description():
         executable="detector_node",
         name="detector_node",
         output="screen",
-        parameters=[{
-            "sub_image": LaunchConfiguration("sub_image"),
-            "pub_image": LaunchConfiguration("pub_image"),
-            "pub_det": LaunchConfiguration("pub_det"),
-
-            "model_path": LaunchConfiguration("model_path"),
-            "device": LaunchConfiguration("device"),
-            "imgsz": LaunchConfiguration("imgsz"),
-            "conf": LaunchConfiguration("conf"),
-            "iou": LaunchConfiguration("iou"),
-            "class_ids": LaunchConfiguration("class_ids"),
-
-            "max_fps": LaunchConfiguration("max_fps"),
-            "qos_depth": LaunchConfiguration("qos_depth"),
-
-            "sub_reliability": LaunchConfiguration("sub_reliability"),
-            "pub_image_reliability": LaunchConfiguration("pub_image_reliability"),
-            "pub_det_reliability": LaunchConfiguration("pub_det_reliability"),
-        }]
+        parameters=[
+            {
+                "sub_image": LaunchConfiguration("sub_image"),
+                "pub_image": LaunchConfiguration("pub_image"),
+                "pub_det": LaunchConfiguration("pub_det"),
+                "model_path": LaunchConfiguration("model_path"),
+                "device": LaunchConfiguration("device"),
+                "imgsz": LaunchConfiguration("imgsz"),
+                "conf": LaunchConfiguration("conf"),
+                "iou": LaunchConfiguration("iou"),
+                "class_ids": LaunchConfiguration("class_ids"),
+                "max_fps": LaunchConfiguration("max_fps"),
+                "qos_depth": LaunchConfiguration("qos_depth"),
+                "sub_reliability": LaunchConfiguration("sub_reliability"),
+                "pub_image_reliability": LaunchConfiguration("pub_image_reliability"),
+                "pub_det_reliability": LaunchConfiguration("pub_det_reliability"),
+            }
+        ],
     )
 
-    start_detector = TimerAction(
-        period=LaunchConfiguration("start_delay"),
-        actions=[detector]
-    )
+    start_detector = TimerAction(period=LaunchConfiguration("start_delay"), actions=[detector])
 
     # ---------- Viewer (image_tools showimage) ----------
     viewer_annot = Node(
@@ -83,11 +78,8 @@ def generate_launch_description():
         executable="showimage",
         name="show_annotated",
         output="screen",
-        arguments=[
-            "--ros-args",
-            "-r", ["image:=", LaunchConfiguration("pub_image")]
-        ],
-        condition=IfCondition(LaunchConfiguration("view_annot"))
+        arguments=["--ros-args", "-r", ["image:=", LaunchConfiguration("pub_image")]],
+        condition=IfCondition(LaunchConfiguration("view_annot")),
     )
 
     viewer_raw = Node(
@@ -95,28 +87,37 @@ def generate_launch_description():
         executable="showimage",
         name="show_raw",
         output="screen",
-        arguments=[
-            "--ros-args",
-            "-r", ["image:=", LaunchConfiguration("sub_image")]
-        ],
-        condition=IfCondition(LaunchConfiguration("view_raw"))
+        arguments=["--ros-args", "-r", ["image:=", LaunchConfiguration("sub_image")]],
+        condition=IfCondition(LaunchConfiguration("view_raw")),
     )
 
     start_viewers = TimerAction(
-        period=LaunchConfiguration("start_delay"),
-        actions=[viewer_annot, viewer_raw]
+        period=LaunchConfiguration("start_delay"), actions=[viewer_annot, viewer_raw]
     )
 
-    return LaunchDescription([
-        # args
-        arg_view_annot, arg_view_raw, arg_start_delay,
-        arg_sub_image, arg_pub_image, arg_pub_det,
-        arg_model, arg_device, arg_imgsz, arg_conf, arg_iou, arg_class_ids,
-        arg_max_fps, arg_qos_depth,
-        arg_sub_rel, arg_pub_image_rel, arg_pub_det_rel,
-
-        # actions
-        cam_launch,
-        start_detector,
-        start_viewers,
-    ])
+    return LaunchDescription(
+        [
+            # args
+            arg_view_annot,
+            arg_view_raw,
+            arg_start_delay,
+            arg_sub_image,
+            arg_pub_image,
+            arg_pub_det,
+            arg_model,
+            arg_device,
+            arg_imgsz,
+            arg_conf,
+            arg_iou,
+            arg_class_ids,
+            arg_max_fps,
+            arg_qos_depth,
+            arg_sub_rel,
+            arg_pub_image_rel,
+            arg_pub_det_rel,
+            # actions
+            cam_launch,
+            start_detector,
+            start_viewers,
+        ]
+    )

@@ -27,20 +27,18 @@ Output:
 
 from __future__ import annotations
 
-import time
 from dataclasses import dataclass
+import time
 from typing import Optional
 
 import cv2
+from cv_bridge import CvBridge
 import numpy as np
-
 import rclpy
 from rclpy.node import Node
-from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
-
+from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import Image
 from std_msgs.msg import Bool, Float32, String
-from cv_bridge import CvBridge
 
 
 def clamp(x: float, lo: float, hi: float) -> float:
@@ -102,9 +100,7 @@ class FrameFreezeDetectorNode(Node):
         self.state = FreezeState()
         self.state.last_frame_wall = time.time()
 
-        self.sub = self.create_subscription(
-            Image, self.input_topic, self.on_image, qos_img
-        )
+        self.sub = self.create_subscription(Image, self.input_topic, self.on_image, qos_img)
         self.pub_freeze = self.create_publisher(Bool, self.freeze_topic, 10)
         self.pub_score = self.create_publisher(Float32, self.score_topic, 10)
         self.pub_reason = self.create_publisher(String, self.reason_topic, 10)
@@ -171,8 +167,7 @@ class FrameFreezeDetectorNode(Node):
 
         base = 1.0 - clamp(mean_diff / max(self.diff_threshold, 1e-6), 0.0, 1.0)
         progress = clamp(
-            self.state.still_count / max(float(self.consecutive_frames), 1.0),
-            0.0, 1.0
+            self.state.still_count / max(float(self.consecutive_frames), 1.0), 0.0, 1.0
         )
         score = base * progress
 

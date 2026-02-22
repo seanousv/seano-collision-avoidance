@@ -20,27 +20,25 @@ Tujuan:
 from __future__ import annotations
 
 import os
-import time
-import threading
 from pathlib import Path
-from typing import Optional, Set, Tuple, List
+import threading
+import time
+from typing import List, Optional, Set, Tuple
 
 import cv2
+from cv_bridge import CvBridge
 import numpy as np
-
+from rcl_interfaces.msg import SetParametersResult
 import rclpy
 from rclpy.node import Node
 from rclpy.parameter import Parameter
-from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
-from rcl_interfaces.msg import SetParametersResult
-
-from cv_bridge import CvBridge
+from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import Image
-
-from vision_msgs.msg import Detection2DArray, Detection2D, ObjectHypothesisWithPose
+from vision_msgs.msg import Detection2D, Detection2DArray, ObjectHypothesisWithPose
 
 try:
     from ultralytics import YOLO
+
     _HAS_YOLO = True
 except Exception:
     YOLO = None
@@ -97,18 +95,18 @@ class DetectorNode(Node):
         self.declare_parameter("publish_empty_detections", True)
 
         self.declare_parameter("model_path", "yolov8n.pt")
-        self.declare_parameter("device", "cpu")      # contoh: "cpu", "cuda:0", "0"
+        self.declare_parameter("device", "cpu")  # contoh: "cpu", "cuda:0", "0"
         self.declare_parameter("imgsz", 416)
         self.declare_parameter("conf", 0.25)
         self.declare_parameter("iou", 0.45)
         self.declare_parameter("class_ids", "ALL")
 
-        self.declare_parameter("max_det", 50)        # batasi output deteksi
+        self.declare_parameter("max_det", 50)  # batasi output deteksi
         self.declare_parameter("agnostic_nms", False)
-        self.declare_parameter("half", False)        # fp16 (biasanya untuk CUDA)
+        self.declare_parameter("half", False)  # fp16 (biasanya untuk CUDA)
         self.declare_parameter("warmup", True)
 
-        self.declare_parameter("max_fps", 10.0)      # 0 = secepatnya (tidak disarankan di WSL)
+        self.declare_parameter("max_fps", 10.0)  # 0 = secepatnya (tidak disarankan di WSL)
         self.declare_parameter("qos_depth", 1)
 
         self.declare_parameter("sub_reliability", "reliable")
@@ -163,7 +161,9 @@ class DetectorNode(Node):
 
         # ---------------- Model ----------------
         if not _HAS_YOLO:
-            self.get_logger().error("Ultralytics YOLO tidak tersedia. Pastikan 'ultralytics' sudah terpasang.")
+            self.get_logger().error(
+                "Ultralytics YOLO tidak tersedia. Pastikan 'ultralytics' sudah terpasang."
+            )
             raise RuntimeError("ultralytics not available")
 
         weights_path = self._resolve_model_path(self.model_path)
@@ -215,8 +215,12 @@ class DetectorNode(Node):
 
         self.qos_depth = int(self.get_parameter("qos_depth").value)
         self.sub_rel = _reliability_from_str(str(self.get_parameter("sub_reliability").value))
-        self.pub_img_rel = _reliability_from_str(str(self.get_parameter("pub_image_reliability").value))
-        self.pub_det_rel = _reliability_from_str(str(self.get_parameter("pub_det_reliability").value))
+        self.pub_img_rel = _reliability_from_str(
+            str(self.get_parameter("pub_image_reliability").value)
+        )
+        self.pub_det_rel = _reliability_from_str(
+            str(self.get_parameter("pub_det_reliability").value)
+        )
 
     def _read_runtime_params(self) -> None:
         self.publish_annotated = bool(self.get_parameter("publish_annotated").value)
@@ -248,8 +252,12 @@ class DetectorNode(Node):
 
         self.stats_period = float(self.get_parameter("stats_period").value)
 
-        self.overlay_color = self._parse_color(self.get_parameter("annotated_overlay_color_bgr").value, (0, 255, 0))
-        self.proc_text_color = self._parse_color(self.get_parameter("proc_text_color_bgr").value, (255, 255, 255))
+        self.overlay_color = self._parse_color(
+            self.get_parameter("annotated_overlay_color_bgr").value, (0, 255, 0)
+        )
+        self.proc_text_color = self._parse_color(
+            self.get_parameter("proc_text_color_bgr").value, (255, 255, 255)
+        )
         self.label_bg_alpha = float(self.get_parameter("label_bg_alpha").value)
         self.label_bg_alpha = max(0.0, min(0.9, self.label_bg_alpha))
 
@@ -273,7 +281,7 @@ class DetectorNode(Node):
         Perubahan QoS/topic/model_path/device sebaiknya restart node.
         """
         names = {p.name for p in params}
-        timer_related = ("max_fps" in names)
+        timer_related = "max_fps" in names
 
         try:
             self._read_runtime_params()
@@ -306,7 +314,9 @@ class DetectorNode(Node):
     def _parse_color(v, fallback: Tuple[int, int, int]) -> Tuple[int, int, int]:
         try:
             if isinstance(v, (list, tuple)) and len(v) == 3:
-                b = int(v[0]); g = int(v[1]); r = int(v[2])
+                b = int(v[0])
+                g = int(v[1])
+                r = int(v[2])
                 b = max(0, min(255, b))
                 g = max(0, min(255, g))
                 r = max(0, min(255, r))
@@ -331,6 +341,7 @@ class DetectorNode(Node):
 
         try:
             from ament_index_python.packages import get_package_share_directory  # type: ignore
+
             share_dir = Path(get_package_share_directory("seano_vision"))
             share_try_1 = share_dir / "models" / Path(p).name
             share_try_2 = share_dir / p
@@ -400,7 +411,7 @@ class DetectorNode(Node):
             # YOLO inference
             try:
                 device_arg = self.device if self.device != "" else None
-                classes_arg = (sorted(list(self.class_ids)) if self.class_ids is not None else None)
+                classes_arg = sorted(list(self.class_ids)) if self.class_ids is not None else None
 
                 result = self.model.predict(
                     source=frame,
@@ -440,7 +451,7 @@ class DetectorNode(Node):
                     cls = cls[order]
                     confs = confs[order]
 
-                for (x1, y1, x2, y2), c_id, score in zip(xyxy, cls, confs):
+                for (x1, y1, x2, y2), c_id, score in zip(xyxy, cls, confs, strict=False):
                     # filter ulang (double safety, kalau classes_arg None tapi class_ids diubah runtime)
                     if self.class_ids is not None and int(c_id) not in self.class_ids:
                         continue
@@ -476,7 +487,9 @@ class DetectorNode(Node):
                         if self.draw_boxes:
                             p1 = (int(x1), int(y1))
                             p2 = (int(x2), int(y2))
-                            cv2.rectangle(annotated, p1, p2, self.overlay_color, int(self.box_thickness))
+                            cv2.rectangle(
+                                annotated, p1, p2, self.overlay_color, int(self.box_thickness)
+                            )
 
                         if self.draw_labels:
                             if isinstance(self.names, dict):
@@ -490,7 +503,10 @@ class DetectorNode(Node):
 
                             if self.draw_label_bg:
                                 (tw, th), base = cv2.getTextSize(
-                                    label, cv2.FONT_HERSHEY_SIMPLEX, float(self.font_scale), int(self.font_thickness)
+                                    label,
+                                    cv2.FONT_HERSHEY_SIMPLEX,
+                                    float(self.font_scale),
+                                    int(self.font_thickness),
                                 )
                                 bx1 = tx
                                 by1 = max(0, ty - th - base - 6)
@@ -501,7 +517,11 @@ class DetectorNode(Node):
                                 overlay = annotated.copy()
                                 cv2.rectangle(overlay, (bx1, by1), (bx2, by2), (0, 0, 0), -1)
                                 annotated[:] = cv2.addWeighted(
-                                    overlay, float(self.label_bg_alpha), annotated, 1.0 - float(self.label_bg_alpha), 0
+                                    overlay,
+                                    float(self.label_bg_alpha),
+                                    annotated,
+                                    1.0 - float(self.label_bg_alpha),
+                                    0,
                                 )
 
                             cv2.putText(
@@ -512,12 +532,14 @@ class DetectorNode(Node):
                                 float(self.font_scale),
                                 self.overlay_color,
                                 int(self.font_thickness),
-                                cv2.LINE_AA
+                                cv2.LINE_AA,
                             )
 
             proc_ms = (time.time() - t0) * 1000.0
-            self._proc_ema_ms = proc_ms if self._frames == 0 else (
-                self._ema_alpha * proc_ms + (1.0 - self._ema_alpha) * self._proc_ema_ms
+            self._proc_ema_ms = (
+                proc_ms
+                if self._frames == 0
+                else (self._ema_alpha * proc_ms + (1.0 - self._ema_alpha) * self._proc_ema_ms)
             )
             self._frames += 1
             self._last_det_count = det_count
@@ -532,7 +554,7 @@ class DetectorNode(Node):
                     0.75,
                     self.proc_text_color,
                     2,
-                    cv2.LINE_AA
+                    cv2.LINE_AA,
                 )
 
             # publish detections

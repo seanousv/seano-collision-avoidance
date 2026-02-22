@@ -82,7 +82,6 @@ def generate_launch_description():
                 description="YAML param file path (absolute) or filename in seano_vision/config/",
             ),
             DeclareLaunchArgument("node_name", default_value="camera_hp"),
-
             # Optional overrides (prove-empty by default so YAML is not overridden)
             DeclareLaunchArgument("source", default_value=""),
             DeclareLaunchArgument("backend", default_value=""),
@@ -94,7 +93,6 @@ def generate_launch_description():
             DeclareLaunchArgument("device_fps", default_value=""),
             DeclareLaunchArgument("url", default_value=""),
             DeclareLaunchArgument("pipeline", default_value=""),
-
             OpaqueFunction(function=_launch_setup),
         ]
     )

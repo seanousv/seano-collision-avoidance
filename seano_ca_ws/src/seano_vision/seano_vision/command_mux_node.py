@@ -17,12 +17,12 @@ Kenapa penting:
 - Bridge MAVROS hanya listen satu pasang topik output (stabil).
 """
 
-import time
 from dataclasses import dataclass
+import time
 
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import Float32, Bool
+from std_msgs.msg import Bool, Float32
 
 
 def clamp(x: float, lo: float, hi: float) -> float:
@@ -59,9 +59,9 @@ class CommandMuxNode(Node):
 
         # Behavior
         self.declare_parameter("rate_hz", 20.0)
-        self.declare_parameter("command_timeout_s", 0.6)        # stale -> failsafe
-        self.declare_parameter("fallback_to_manual", True)      # kalau AUTO stale, pakai MANUAL
-        self.declare_parameter("allow_reverse", False)          # default untuk USV test
+        self.declare_parameter("command_timeout_s", 0.6)  # stale -> failsafe
+        self.declare_parameter("fallback_to_manual", True)  # kalau AUTO stale, pakai MANUAL
+        self.declare_parameter("allow_reverse", False)  # default untuk USV test
         self.declare_parameter("output_min", 0.0)
         self.declare_parameter("output_max", 1.0)
         self.declare_parameter("log_period_s", 1.5)
@@ -77,12 +77,22 @@ class CommandMuxNode(Node):
         self.pub_right = self.create_publisher(Float32, out_right, 10)
 
         # Subscribers
-        self.create_subscription(Float32, self.get_parameter("manual_left_topic").value, self._cb_manual_left, 10)
-        self.create_subscription(Float32, self.get_parameter("manual_right_topic").value, self._cb_manual_right, 10)
-        self.create_subscription(Float32, self.get_parameter("auto_left_topic").value, self._cb_auto_left, 10)
-        self.create_subscription(Float32, self.get_parameter("auto_right_topic").value, self._cb_auto_right, 10)
+        self.create_subscription(
+            Float32, self.get_parameter("manual_left_topic").value, self._cb_manual_left, 10
+        )
+        self.create_subscription(
+            Float32, self.get_parameter("manual_right_topic").value, self._cb_manual_right, 10
+        )
+        self.create_subscription(
+            Float32, self.get_parameter("auto_left_topic").value, self._cb_auto_left, 10
+        )
+        self.create_subscription(
+            Float32, self.get_parameter("auto_right_topic").value, self._cb_auto_right, 10
+        )
 
-        self.create_subscription(Bool, self.get_parameter("auto_enable_topic").value, self._cb_auto_enable, 10)
+        self.create_subscription(
+            Bool, self.get_parameter("auto_enable_topic").value, self._cb_auto_enable, 10
+        )
 
         hz = float(self.get_parameter("rate_hz").value)
         if hz <= 0:
@@ -93,7 +103,9 @@ class CommandMuxNode(Node):
         self._last_log = time.time()
 
         self.get_logger().info("Command mux ready (MANUAL/AUTO -> OUT left/right).")
-        self.get_logger().info("Default: auto_enable=false (MANUAL). Publish Bool true to /seano/auto_enable to switch AUTO.")
+        self.get_logger().info(
+            "Default: auto_enable=false (MANUAL). Publish Bool true to /seano/auto_enable to switch AUTO."
+        )
 
     def _cb_auto_enable(self, msg: Bool):
         self.auto_enable = bool(msg.data)
@@ -142,7 +154,9 @@ class CommandMuxNode(Node):
                 left = 0.0
                 right = 0.0
                 self._publish(left, right)
-                self._log_periodic(now, chosen_name, chosen_age, manual_age, left, right, failsafe=True)
+                self._log_periodic(
+                    now, chosen_name, chosen_age, manual_age, left, right, failsafe=True
+                )
                 return
 
         left = chosen.left
@@ -167,7 +181,16 @@ class CommandMuxNode(Node):
         self.pub_left.publish(Float32(data=float(left)))
         self.pub_right.publish(Float32(data=float(right)))
 
-    def _log_periodic(self, now: float, mode: str, age_sel: float, age_manual: float, left: float, right: float, failsafe: bool):
+    def _log_periodic(
+        self,
+        now: float,
+        mode: str,
+        age_sel: float,
+        age_manual: float,
+        left: float,
+        right: float,
+        failsafe: bool,
+    ):
         period = float(self.get_parameter("log_period_s").value)
         if period <= 0:
             return

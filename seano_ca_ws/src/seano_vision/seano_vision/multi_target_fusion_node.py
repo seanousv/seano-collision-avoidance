@@ -24,14 +24,13 @@ Node ini ringan (tanpa OpenCV), hanya baca metadata image untuk normalisasi.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Optional, Tuple, List
+from typing import Dict, List, Optional, Tuple
 
 import rclpy
 from rclpy.node import Node
-from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
-
+from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import Image
-from vision_msgs.msg import Detection2DArray, Detection2D
+from vision_msgs.msg import Detection2D, Detection2DArray
 
 
 def det_to_xyxy(det: Detection2D) -> Tuple[float, float, float, float]:
@@ -184,10 +183,10 @@ class MultiTargetFusionNode(Node):
 
         # area pakai sqrt supaya tidak over-dominant
         score = (
-            w_bottom * y2n +
-            w_area * (arean ** 0.5) +
-            w_center * center +
-            w_det * clamp(det_score, 0.0, 1.0)
+            w_bottom * y2n
+            + w_area * (arean**0.5)
+            + w_center * center
+            + w_det * clamp(det_score, 0.0, 1.0)
         )
         return float(score)
 
@@ -309,7 +308,7 @@ class MultiTargetFusionNode(Node):
         out.header = msg.header
 
         # copy detections in new order, set det.id to track id (optional)
-        for det, tid, sc in tracked_sorted:
+        for det, tid, _sc in tracked_sorted:
             dd = det  # we can reuse object; but safer make a shallow copy by constructing new
             # karena Detection2D bukan dataclass, paling aman: pakai langsung dan set id
             if tid >= 0:

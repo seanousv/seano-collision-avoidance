@@ -26,19 +26,19 @@ Catatan:
 
 from __future__ import annotations
 
-import time
 from dataclasses import dataclass
+import time
 
+from geometry_msgs.msg import Twist
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import String, Bool, Float32
-from geometry_msgs.msg import Twist
+from std_msgs.msg import Bool, Float32, String
 
 
 @dataclass
 class ActuatorCmd:
     throttle: float  # 0..1 (atau -1..1 jika reverse)
-    rudder: float    # -1..1
+    rudder: float  # -1..1
 
 
 def clamp(x: float, lo: float, hi: float) -> float:
@@ -100,9 +100,9 @@ class ActuatorSafetyLimiterNode(Node):
         self.declare_parameter("slew_right_per_s", 0.8)
 
         # Output options
-        self.declare_parameter("publish_left_right", True)    # <- ini yang kamu mau
-        self.declare_parameter("publish_thr_steer", False)    # matikan biar tidak membingungkan
-        self.declare_parameter("publish_twist", False)        # optional
+        self.declare_parameter("publish_left_right", True)  # <- ini yang kamu mau
+        self.declare_parameter("publish_thr_steer", False)  # matikan biar tidak membingungkan
+        self.declare_parameter("publish_twist", False)  # optional
         self.declare_parameter("unknown_command_policy", "HOLD")  # HOLD / STOP
 
         # Differential mix
@@ -114,7 +114,9 @@ class ActuatorSafetyLimiterNode(Node):
         self.declare_parameter("auto_enable_topic", "/seano/auto_enable")
         self.declare_parameter("auto_enable_on_start", False)
         self.declare_parameter("auto_enable_keepalive_hz", 1.0)
-        self._pub_auto_enable = self.create_publisher(Bool, self.get_parameter("auto_enable_topic").value, 10)
+        self._pub_auto_enable = self.create_publisher(
+            Bool, self.get_parameter("auto_enable_topic").value, 10
+        )
 
         # ---------- State ----------
         self.last_cmd_str: str = "HOLD_COURSE"
@@ -139,14 +141,26 @@ class ActuatorSafetyLimiterNode(Node):
         self.create_subscription(Bool, fs_topic, self._on_failsafe, 10)
 
         # final output pubs
-        self.pub_left = self.create_publisher(Float32, self.get_parameter("out_left_topic").value, 10)
-        self.pub_right = self.create_publisher(Float32, self.get_parameter("out_right_topic").value, 10)
+        self.pub_left = self.create_publisher(
+            Float32, self.get_parameter("out_left_topic").value, 10
+        )
+        self.pub_right = self.create_publisher(
+            Float32, self.get_parameter("out_right_topic").value, 10
+        )
 
         # optional pubs
-        self.pub_thr = self.create_publisher(Float32, self.get_parameter("out_throttle_topic").value, 10)
-        self.pub_rud = self.create_publisher(Float32, self.get_parameter("out_rudder_topic").value, 10)
-        self.pub_twist = self.create_publisher(Twist, self.get_parameter("out_twist_topic").value, 10)
-        self.pub_final = self.create_publisher(String, self.get_parameter("out_command_final_topic").value, 10)
+        self.pub_thr = self.create_publisher(
+            Float32, self.get_parameter("out_throttle_topic").value, 10
+        )
+        self.pub_rud = self.create_publisher(
+            Float32, self.get_parameter("out_rudder_topic").value, 10
+        )
+        self.pub_twist = self.create_publisher(
+            Twist, self.get_parameter("out_twist_topic").value, 10
+        )
+        self.pub_final = self.create_publisher(
+            String, self.get_parameter("out_command_final_topic").value, 10
+        )
 
         loop_hz = float(self.get_parameter("loop_hz").value)
         loop_hz = 20.0 if loop_hz <= 0 else loop_hz
@@ -159,7 +173,9 @@ class ActuatorSafetyLimiterNode(Node):
         if bool(self.get_parameter("auto_enable_on_start").value):
             self._pub_auto_enable.publish(Bool(data=True))
 
-        self.get_logger().info(f"Started | cmd={cmd_topic} failsafe={fs_topic} | loop={loop_hz:.1f}Hz")
+        self.get_logger().info(
+            f"Started | cmd={cmd_topic} failsafe={fs_topic} | loop={loop_hz:.1f}Hz"
+        )
 
     def _auto_enable_keepalive(self):
         if bool(self.get_parameter("auto_enable_on_start").value):
@@ -236,12 +252,16 @@ class ActuatorSafetyLimiterNode(Node):
             reason = f"cmd_timeout({cmd_age:.2f}s)"
         if failsafe_active:
             final_cmd = "STOP"
-            reason = "failsafe_true" if self.last_failsafe_active else f"failsafe_stale({fs_age:.2f}s)"
+            reason = (
+                "failsafe_true" if self.last_failsafe_active else f"failsafe_stale({fs_age:.2f}s)"
+            )
 
         # Print reason periodically
         if now - self._last_reason_print > 1.0:
             self._last_reason_print = now
-            self.get_logger().info(f"final={final_cmd} reason={reason} cmd_age={cmd_age:.2f}s fs_age={fs_age:.2f}s")
+            self.get_logger().info(
+                f"final={final_cmd} reason={reason} cmd_age={cmd_age:.2f}s fs_age={fs_age:.2f}s"
+            )
 
         # Map to target thr/rud
         target = self._map_command_to_target(final_cmd)
@@ -252,7 +272,10 @@ class ActuatorSafetyLimiterNode(Node):
 
         # Slew thr/rud
         self.throttle_cmd = slew_limit(
-            self.throttle_cmd, target.throttle, float(self.get_parameter("slew_throttle_per_s").value), dt
+            self.throttle_cmd,
+            target.throttle,
+            float(self.get_parameter("slew_throttle_per_s").value),
+            dt,
         )
         self.rudder_cmd = slew_limit(
             self.rudder_cmd, target.rudder, float(self.get_parameter("slew_rudder_per_s").value), dt

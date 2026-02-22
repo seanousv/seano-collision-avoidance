@@ -18,17 +18,16 @@ Output:
 
 from __future__ import annotations
 
-import math
 import copy
 from dataclasses import dataclass
+import math
 
+from builtin_interfaces.msg import Time
 import rclpy
 from rclpy.node import Node
-from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
-
+from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import Image
 from std_msgs.msg import Bool, String
-from builtin_interfaces.msg import Time
 
 
 def time_to_sec(t: Time) -> float:
@@ -68,16 +67,18 @@ class TimeSyncNode(Node):
         self.declare_parameter("time_status_topic", "/vision/time_status")
 
         self.declare_parameter("expected_fps", 15.0)
-        self.declare_parameter("max_backward_sec", 0.05)   # stamp mundur lebih dari ini = invalid
-        self.declare_parameter("max_jump_sec", 2.0)         # loncat maju lebih dari ini = invalid
-        self.declare_parameter("max_skew_sec", 5.0)         # beda dengan now() lebih dari ini = invalid
-        self.declare_parameter("force_monotonic", True)     # pastikan output stamp selalu naik
-        self.declare_parameter("status_hz", 2.0)            # publish status summary rate
+        self.declare_parameter("max_backward_sec", 0.05)  # stamp mundur lebih dari ini = invalid
+        self.declare_parameter("max_jump_sec", 2.0)  # loncat maju lebih dari ini = invalid
+        self.declare_parameter("max_skew_sec", 5.0)  # beda dengan now() lebih dari ini = invalid
+        self.declare_parameter("force_monotonic", True)  # pastikan output stamp selalu naik
+        self.declare_parameter("status_hz", 2.0)  # publish status summary rate
 
         self.in_topic = self.get_parameter("input_topic").get_parameter_value().string_value
         self.out_topic = self.get_parameter("output_topic").get_parameter_value().string_value
         self.time_ok_topic = self.get_parameter("time_ok_topic").get_parameter_value().string_value
-        self.time_status_topic = self.get_parameter("time_status_topic").get_parameter_value().string_value
+        self.time_status_topic = (
+            self.get_parameter("time_status_topic").get_parameter_value().string_value
+        )
 
         self.expected_fps = float(self.get_parameter("expected_fps").value)
         self.max_backward = float(self.get_parameter("max_backward_sec").value)

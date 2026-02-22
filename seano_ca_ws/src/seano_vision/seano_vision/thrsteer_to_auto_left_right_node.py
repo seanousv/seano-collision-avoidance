@@ -22,9 +22,10 @@ Behavior:
 """
 
 import time
+
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import Float32, Bool
+from std_msgs.msg import Bool, Float32
 
 
 def clamp(x: float, lo: float, hi: float) -> float:
@@ -54,7 +55,7 @@ class ThrSteerToAutoLeftRight(Node):
         # Mix + clamps
         self.declare_parameter("diff_mix_gain", 0.7)
         self.declare_parameter("allow_reverse", False)
-        self.declare_parameter("thr_max", 0.60)     # batas aman test
+        self.declare_parameter("thr_max", 0.60)  # batas aman test
         self.declare_parameter("out_min", 0.0)
         self.declare_parameter("out_max", 1.0)
 
@@ -68,12 +69,20 @@ class ThrSteerToAutoLeftRight(Node):
         self._last_log = time.time()
 
         # Pub/Sub
-        self.pub_left = self.create_publisher(Float32, self.get_parameter("out_left_topic").value, 10)
-        self.pub_right = self.create_publisher(Float32, self.get_parameter("out_right_topic").value, 10)
-        self.pub_auto_enable = self.create_publisher(Bool, self.get_parameter("auto_enable_topic").value, 10)
+        self.pub_left = self.create_publisher(
+            Float32, self.get_parameter("out_left_topic").value, 10
+        )
+        self.pub_right = self.create_publisher(
+            Float32, self.get_parameter("out_right_topic").value, 10
+        )
+        self.pub_auto_enable = self.create_publisher(
+            Bool, self.get_parameter("auto_enable_topic").value, 10
+        )
 
         self.create_subscription(Float32, self.get_parameter("thr_topic").value, self._cb_thr, 10)
-        self.create_subscription(Float32, self.get_parameter("steer_topic").value, self._cb_steer, 10)
+        self.create_subscription(
+            Float32, self.get_parameter("steer_topic").value, self._cb_steer, 10
+        )
 
         hz = float(self.get_parameter("rate_hz").value)
         if hz <= 0:
@@ -152,7 +161,9 @@ class ThrSteerToAutoLeftRight(Node):
         period = float(self.get_parameter("log_period_s").value)
         if period > 0 and (now - self._last_log) >= period:
             self._last_log = now
-            self.get_logger().info(f"thr={thr:.2f} steer={steer:.2f} -> auto_left={left:.2f} auto_right={right:.2f}")
+            self.get_logger().info(
+                f"thr={thr:.2f} steer={steer:.2f} -> auto_left={left:.2f} auto_right={right:.2f}"
+            )
 
 
 def main(args=None):

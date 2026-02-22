@@ -207,4 +207,3 @@ This repository includes a ROS 2 Humble build workflow:
 
 * Workflow: `.github/workflows/ros2_ci.yml`
 * Status: shown via the CI badge above
-

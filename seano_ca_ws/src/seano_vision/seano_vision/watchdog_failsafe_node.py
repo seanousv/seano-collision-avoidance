@@ -21,19 +21,18 @@ from __future__ import annotations
 
 import json
 import time
-from typing import Optional, List, Tuple, Dict
+from typing import Dict, List, Optional, Tuple
 
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import (
-    QoSProfile,
-    ReliabilityPolicy,
     DurabilityPolicy,
     HistoryPolicy,
+    QoSProfile,
+    ReliabilityPolicy,
 )
-
 from sensor_msgs.msg import Image
-from std_msgs.msg import Float32, String, Bool
+from std_msgs.msg import Bool, Float32, String
 
 
 def _qos(depth: int = 1, reliability: str = "best_effort") -> QoSProfile:
@@ -66,12 +65,12 @@ def _norm_mode(s: str) -> str:
 
 def _is_lost_mode(mode: str) -> bool:
     m = _norm_mode(mode)
-    return ("LOST" in m)
+    return "LOST" in m
 
 
 def _is_caution_mode(mode: str) -> bool:
     m = _norm_mode(mode)
-    return ("CAUTION" in m)
+    return "CAUTION" in m
 
 
 class WatchdogFailsafeNode(Node):
@@ -177,7 +176,9 @@ class WatchdogFailsafeNode(Node):
         self.freeze: Optional[bool] = None
         self.freeze_reason: str = ""
 
-        self.state: str = "LOST" if bool(self.get_parameter("start_in_failsafe").value) else "NORMAL"
+        self.state: str = (
+            "LOST" if bool(self.get_parameter("start_in_failsafe").value) else "NORMAL"
+        )
         self.state_enter_t: float = _now_s()
         self.ok_since_t: Optional[float] = None
 
@@ -418,10 +419,16 @@ class WatchdogFailsafeNode(Node):
             if bool(self.get_parameter("lost_if_image_stale").value) and best_age > image_to:
                 lost.append(f"image_stale>{image_to:.1f}s")
 
-            if bool(self.get_parameter("lost_if_risk_stale").value) and self._age(self.last_risk_t) > risk_to:
+            if (
+                bool(self.get_parameter("lost_if_risk_stale").value)
+                and self._age(self.last_risk_t) > risk_to
+            ):
                 lost.append(f"risk_stale>{risk_to:.1f}s")
 
-            if bool(self.get_parameter("lost_if_mode_stale").value) and self._age(self.last_mode_t) > mode_to:
+            if (
+                bool(self.get_parameter("lost_if_mode_stale").value)
+                and self._age(self.last_mode_t) > mode_to
+            ):
                 lost.append(f"mode_stale>{mode_to:.1f}s")
 
         if bool(self.get_parameter("lost_if_mode_lost").value) and _is_lost_mode(self.mode):
@@ -451,7 +458,7 @@ class WatchdogFailsafeNode(Node):
         cmd_to = float(self.get_parameter("command_timeout_s").value)
 
         lost_reasons, caution_reasons = self._compute_reasons()
-        wants_lost = (len(lost_reasons) > 0)
+        wants_lost = len(lost_reasons) > 0
 
         vq_ok, vq = self._vq_valid()
         vq_enter = float(self.get_parameter("vq_caution_enter").value)
@@ -490,8 +497,8 @@ class WatchdogFailsafeNode(Node):
             else:
                 self._transition("CAUTION" if wants_caution else "NORMAL")
 
-        cmd_in_ok = (self._age(self.last_cmd_t) <= cmd_to)
-        cmd_in = (self.cmd_in if cmd_in_ok else "")
+        cmd_in_ok = self._age(self.last_cmd_t) <= cmd_to
+        cmd_in = self.cmd_in if cmd_in_ok else ""
 
         if self.state == "LOST":
             cmd_safe = cmd_stop

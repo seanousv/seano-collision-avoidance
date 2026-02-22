@@ -27,16 +27,15 @@ from typing import Optional, Tuple
 
 import rclpy
 from rclpy.node import Node
-from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
-
+from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import Image
 from std_msgs.msg import Int32
 
 _HAS_CV = True
 try:
     import cv2
-    import numpy as np
     from cv_bridge import CvBridge
+    import numpy as np
 except Exception:
     _HAS_CV = False
     cv2 = None
@@ -63,11 +62,11 @@ class WaterlineHorizonNode(Node):
         self.declare_parameter("publish_mask", True)
 
         # fallback & smoothing
-        self.declare_parameter("default_ratio", 0.35)   # kalau gagal deteksi: y = ratio * H
-        self.declare_parameter("ema_alpha", 0.25)       # smoothing 0..1 (lebih kecil = lebih halus)
+        self.declare_parameter("default_ratio", 0.35)  # kalau gagal deteksi: y = ratio * H
+        self.declare_parameter("ema_alpha", 0.25)  # smoothing 0..1 (lebih kecil = lebih halus)
 
         # performance
-        self.declare_parameter("process_every_n", 1)    # proses tiap N frame
+        self.declare_parameter("process_every_n", 1)  # proses tiap N frame
         self.declare_parameter("downscale_width", 480)  # biar ringan
 
         # Hough/Canny tuning
@@ -76,7 +75,7 @@ class WaterlineHorizonNode(Node):
         self.declare_parameter("hough_thresh", 60)
         self.declare_parameter("min_line_length", 80)
         self.declare_parameter("max_line_gap", 12)
-        self.declare_parameter("max_abs_slope", 0.25)   # makin kecil makin horizontal
+        self.declare_parameter("max_abs_slope", 0.25)  # makin kecil makin horizontal
 
         # search region (agar tidak kebawa garis bawah)
         self.declare_parameter("search_y_min_ratio", 0.10)
@@ -136,15 +135,19 @@ class WaterlineHorizonNode(Node):
         if lines is None or len(lines) == 0:
             return None
 
-        y_min = int(round(_clamp(float(self.get_parameter("search_y_min_ratio").value), 0.0, 1.0) * h))
-        y_max = int(round(_clamp(float(self.get_parameter("search_y_max_ratio").value), 0.0, 1.0) * h))
+        y_min = int(
+            round(_clamp(float(self.get_parameter("search_y_min_ratio").value), 0.0, 1.0) * h)
+        )
+        y_max = int(
+            round(_clamp(float(self.get_parameter("search_y_max_ratio").value), 0.0, 1.0) * h)
+        )
         max_abs_slope = float(self.get_parameter("max_abs_slope").value)
 
         best = None
         best_score = -1.0
 
-        for l in lines:
-            x1, y1, x2, y2 = l[0]
+        for line in lines:
+            x1, y1, x2, y2 = line[0]
             if x2 == x1:
                 continue
             dy = float(y2 - y1)
@@ -202,10 +205,7 @@ class WaterlineHorizonNode(Node):
         gap = int(self.get_parameter("max_line_gap").value)
 
         lines = cv2.HoughLinesP(
-            edges, 1, np.pi / 180.0,
-            threshold=thr,
-            minLineLength=min_len,
-            maxLineGap=gap
+            edges, 1, np.pi / 180.0, threshold=thr, minLineLength=min_len, maxLineGap=gap
         )
 
         best = self._pick_best_line(lines, sw, sh)
@@ -220,7 +220,9 @@ class WaterlineHorizonNode(Node):
         # scale back to original
         if w > self.down_w:
             scale_back = float(w) / float(sw)
-            y_full = int(round(float(y) * scale_back * (float(sh) / float(h)) * (float(h) / float(sh))))
+            y_full = int(
+                round(float(y) * scale_back * (float(sh) / float(h)) * (float(h) / float(sh)))
+            )
             # (di atas terlihat redundant, tapi aman; intinya y_full = y * (h/sh))
             y_full = int(round(float(y) * (float(h) / float(sh))))
         else:
@@ -251,7 +253,6 @@ class WaterlineHorizonNode(Node):
                 y_est, best_line = self._estimate_waterline(img)
             except Exception:
                 y_est = self._fallback_y(h)
-                best_line = None
 
         # EMA smoothing
         if self.last_y is None:

@@ -11,28 +11,26 @@ Perbaikan utama untuk USB webcam (WSL/Jetson):
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import threading
 import time
-from dataclasses import dataclass
 from typing import Optional
 
 import cv2
+from cv_bridge import CvBridge
 import numpy as np
-
+from rcl_interfaces.msg import SetParametersResult
 import rclpy
 from rclpy.node import Node
 from rclpy.parameter import Parameter
-from rcl_interfaces.msg import SetParametersResult
 from rclpy.qos import (
-    QoSProfile,
-    QoSHistoryPolicy,
-    QoSReliabilityPolicy,
     QoSDurabilityPolicy,
+    QoSHistoryPolicy,
+    QoSProfile,
+    QoSReliabilityPolicy,
 )
-
 from sensor_msgs.msg import Image
 from std_msgs.msg import Header
-from cv_bridge import CvBridge
 
 
 def _is_int(s: str) -> bool:

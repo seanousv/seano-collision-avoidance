@@ -35,13 +35,12 @@ Catatan penting:
 
 from typing import List, Optional
 
-import rclpy
-from rclpy.node import Node
-from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy, HistoryPolicy
-
-from std_msgs.msg import Float32
 from geometry_msgs.msg import Twist
 from mavros_msgs.msg import OverrideRCIn
+import rclpy
+from rclpy.node import Node
+from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
+from std_msgs.msg import Float32
 
 
 def clampf(x: float, lo: float, hi: float) -> float:
@@ -71,17 +70,17 @@ class MavrosRcOverrideBridge(Node):
         self.declare_parameter("out_topic", "/mavros/rc/override")
 
         # ========= Mode =========
-        self.declare_parameter("input_mode", "thr_steer")    # thr_steer | left_right | twist
+        self.declare_parameter("input_mode", "thr_steer")  # thr_steer | left_right | twist
         self.declare_parameter("output_mode", "rc_thr_steer")  # rc_thr_steer | rc_left_right
 
         # ========= RC channel mapping (1-based) =========
         # output_mode = rc_thr_steer:
-        self.declare_parameter("rc_steer_chan", 1)     # CH1
+        self.declare_parameter("rc_steer_chan", 1)  # CH1
         self.declare_parameter("rc_throttle_chan", 3)  # CH3
 
         # output_mode = rc_left_right:
-        self.declare_parameter("rc_left_chan", 1)      # default CH1
-        self.declare_parameter("rc_right_chan", 3)     # default CH3
+        self.declare_parameter("rc_left_chan", 1)  # default CH1
+        self.declare_parameter("rc_right_chan", 3)  # default CH3
 
         # ========= PWM calibration =========
         self.declare_parameter("pwm_neutral", 1500)
@@ -114,8 +113,8 @@ class MavrosRcOverrideBridge(Node):
         self.declare_parameter("diff_mix_gain", 1.0)
 
         # ========= Twist normalization =========
-        self.declare_parameter("twist_v_max", 1.0)       # m/s yang dianggap = throttle 1.0
-        self.declare_parameter("twist_yaw_max", 1.0)     # rad/s yang dianggap = steer 1.0
+        self.declare_parameter("twist_v_max", 1.0)  # m/s yang dianggap = throttle 1.0
+        self.declare_parameter("twist_yaw_max", 1.0)  # rad/s yang dianggap = steer 1.0
 
         # ========= Safety behavior =========
         self.declare_parameter("enable", True)
@@ -130,10 +129,10 @@ class MavrosRcOverrideBridge(Node):
         self.declare_parameter("test_enable", False)
         # untuk thr_steer
         self.declare_parameter("test_throttle", 0.20)  # 0..1
-        self.declare_parameter("test_steer", 0.0)      # -1..1
+        self.declare_parameter("test_steer", 0.0)  # -1..1
         # untuk left_right (opsional)
-        self.declare_parameter("test_left", 0.20)      # 0..1 atau -1..1 jika reverse
-        self.declare_parameter("test_right", 0.20)     # 0..1 atau -1..1 jika reverse
+        self.declare_parameter("test_left", 0.20)  # 0..1 atau -1..1 jika reverse
+        self.declare_parameter("test_right", 0.20)  # 0..1 atau -1..1 jika reverse
 
         qos = QoSProfile(
             history=HistoryPolicy.KEEP_LAST,

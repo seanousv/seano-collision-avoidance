@@ -21,10 +21,10 @@ Catatan:
   Set 0 untuk mematikan deadman.
 """
 
-import sys
-import time
 import select
+import sys
 import termios
+import time
 import tty
 
 import rclpy
@@ -62,24 +62,24 @@ class TeleopDiffThruster(Node):
         self.declare_parameter("rate_hz", 20.0)
 
         # Throttle config
-        self.declare_parameter("throttle_step", 0.05)   # naik/turun per tekan
-        self.declare_parameter("throttle_max", 0.60)    # batas aman test
+        self.declare_parameter("throttle_step", 0.05)  # naik/turun per tekan
+        self.declare_parameter("throttle_max", 0.60)  # batas aman test
         self.declare_parameter("throttle_min", 0.0)
 
         # Steering config (momentary)
-        self.declare_parameter("steer_step", 0.20)      # besar steer tiap tekan a/d (0..1)
+        self.declare_parameter("steer_step", 0.20)  # besar steer tiap tekan a/d (0..1)
         self.declare_parameter("steer_max", 1.0)
-        self.declare_parameter("steer_hold_s", 0.20)    # kalau > ini tidak ada a/d => steer=0
+        self.declare_parameter("steer_hold_s", 0.20)  # kalau > ini tidak ada a/d => steer=0
 
         # Mixer
-        self.declare_parameter("diff_mix_gain", 0.7)    # left=thr+gain*steer, right=thr-gain*steer
+        self.declare_parameter("diff_mix_gain", 0.7)  # left=thr+gain*steer, right=thr-gain*steer
 
         # Deadman safety (0 = off)
         self.declare_parameter("deadman_timeout_s", 2.0)
 
         # State
-        self.thr = 0.0           # 0..1
-        self.steer = 0.0         # -1..1
+        self.thr = 0.0  # 0..1
+        self.steer = 0.0  # -1..1
         self.last_steer_time = time.time()
         self.last_key_time = time.time()
 
@@ -186,7 +186,9 @@ class TeleopDiffThruster(Node):
 
         # log periodik ringan (tiap ~0.5s)
         if int(now * 2) != int((now - self.dt) * 2):
-            self.get_logger().info(f"thr={self.thr:.2f} steer={self.steer:.2f} -> left={left:.2f} right={right:.2f}")
+            self.get_logger().info(
+                f"thr={self.thr:.2f} steer={self.steer:.2f} -> left={left:.2f} right={right:.2f}"
+            )
 
 
 def main(args=None):

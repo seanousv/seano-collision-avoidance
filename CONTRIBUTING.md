@@ -1,6 +1,6 @@
 # Contributing Guide — SEANO Collision Avoidance
 
-Thank you for contributing to the SEANO collision avoidance module.  
+Thank you for contributing to the SEANO collision avoidance module.
 This repository is focused on **vision-based collision avoidance** and the supporting **ROS 2 pipeline** required to run it reliably.
 
 ## Scope

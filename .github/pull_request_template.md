@@ -2,10 +2,10 @@
 <!-- Explain what this PR changes and why. Keep it concise. -->
 
 ## What changed?
-- 
+-
 
 ## Why?
-- 
+-
 
 ---
 

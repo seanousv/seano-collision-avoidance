@@ -39,20 +39,20 @@ All complaints will be reviewed and investigated promptly and fairly. The mainta
 ## Enforcement Guidelines
 Maintainers will follow these Community Impact Guidelines:
 
-1) **Correction**  
-   Community Impact: Use of inappropriate language or other behavior deemed unprofessional.  
+1) **Correction**
+   Community Impact: Use of inappropriate language or other behavior deemed unprofessional.
    Consequence: A private, written warning.
 
-2) **Warning**  
-   Community Impact: A violation through a single incident or series of actions.  
+2) **Warning**
+   Community Impact: A violation through a single incident or series of actions.
    Consequence: A warning with consequences for continued behavior.
 
-3) **Temporary Ban**  
-   Community Impact: Serious violation of community standards.  
+3) **Temporary Ban**
+   Community Impact: Serious violation of community standards.
    Consequence: A temporary ban from contributing.
 
-4) **Permanent Ban**  
-   Community Impact: Demonstrated pattern of violation or severe harassment.  
+4) **Permanent Ban**
+   Community Impact: Demonstrated pattern of violation or severe harassment.
    Consequence: Permanent ban from contributing.
 
 ## Attribution

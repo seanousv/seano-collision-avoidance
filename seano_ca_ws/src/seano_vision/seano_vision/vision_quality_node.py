@@ -26,15 +26,13 @@ import json
 import time
 
 import cv2
+from cv_bridge import CvBridge
 import numpy as np
-
 import rclpy
 from rclpy.node import Node
-from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
-
+from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import Image
 from std_msgs.msg import Float32, String
-from cv_bridge import CvBridge
 
 
 def clamp(x: float, lo: float, hi: float) -> float:
@@ -159,7 +157,9 @@ class VisionQualityNode(Node):
         contrast_bad = float(self.get_parameter("contrast_bad").value)
         contrast_good = float(self.get_parameter("contrast_good").value)
         std = float(np.std(gray))
-        contrast_score = clamp((std - contrast_bad) / max(contrast_good - contrast_bad, 1e-6), 0.0, 1.0)
+        contrast_score = clamp(
+            (std - contrast_bad) / max(contrast_good - contrast_bad, 1e-6), 0.0, 1.0
+        )
 
         # ---------- Glare ----------
         glare_pixel = int(self.get_parameter("glare_pixel").value)
@@ -174,8 +174,12 @@ class VisionQualityNode(Node):
         w_gla = float(self.get_parameter("w_glare").value)
 
         wsum = max(w_blur + w_bri + w_con + w_gla, 1e-6)
-        vq = (w_blur * blur_score + w_bri * bright_score +
-              w_con * contrast_score + w_gla * glare_score) / wsum
+        vq = (
+            w_blur * blur_score
+            + w_bri * bright_score
+            + w_con * contrast_score
+            + w_gla * glare_score
+        ) / wsum
         vq = float(clamp(vq, 0.0, 1.0))
 
         # ---------- Mode ----------
