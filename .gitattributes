@@ -1,0 +1,30 @@
+# Normalize text files to LF to avoid CRLF/LF issues across Windows/WSL
+* text=auto eol=lf
+
+# Shell scripts should always be LF
+*.sh text eol=lf
+
+# Common docs/config as text
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
+*.xml text eol=lf
+*.cfg text eol=lf
+*.ini text eol=lf
+
+# Python sources
+*.py text eol=lf
+
+# Treat these as binary (no line-ending conversion / no diff noise)
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.pdf binary
+*.pt binary
+*.onnx binary
+*.engine binary
+*.bag binary
+*.db3 binary
