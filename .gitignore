@@ -73,3 +73,13 @@ node_modules/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+# --- AI / ML local environment & artifacts ---
+.venv_ai/
+.venv*/
+__pycache__/
+*.pt
+*.onnx
+*.engine
+runs/
+wandb/
+.cache/
