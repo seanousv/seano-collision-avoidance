@@ -13,22 +13,22 @@ This document describes the runtime architecture and ROS 2 interfaces used by th
 ```mermaid
 flowchart LR
   subgraph Inputs
-    KBD[Keyboard Teleop] --> M1[/seano/manual/left_cmd\n/seano/manual/right_cmd/]
-    AUTO[Autonomy Logic\n(risk/planner)] --> A1[/seano/auto/left_cmd\n/seano/auto/right_cmd/]
-    EN[/seano/auto_enable (Bool)/] --> MUX
-    FS[/ca/failsafe_active (Bool)/] --> LIM
+    KBD["Keyboard Teleop"] --> M1["/seano/manual (left_cmd, right_cmd)"]
+    AUTO["Autonomy Logic (risk/planner)"] --> A1["/seano/auto (left_cmd, right_cmd)"]
+    EN["/seano/auto_enable (Bool)"] --> MUX
+    FS["/ca/failsafe_active (Bool)"] --> LIM
   end
 
-  M1 --> MUX[Command MUX]
+  M1 --> MUX["Command MUX"]
   A1 --> MUX
-  MUX --> SEL[/seano/selected/left_cmd\n/seano/selected/right_cmd/]
+  MUX --> SEL["/seano/selected (left_cmd, right_cmd)"]
 
-  SEL --> LIM[Safety Limiter]
-  LIM --> OUT[/seano/left_cmd\n/seano/right_cmd/]
+  SEL --> LIM["Safety Limiter"]
+  LIM --> OUT["/seano (left_cmd, right_cmd)"]
 
-  OUT --> BR[RC Override Bridge]
-  BR --> RC[/mavros/rc/override/]
-  RC --> FCU[ArduPilot FCU (SITL / HW)]
+  OUT --> BR["RC Override Bridge"]
+  BR --> RC["/mavros/rc/override"]
+  RC --> FCU["ArduPilot FCU (SITL / HW)"]
 ````
 
 ## Core design decision: left/right as the primary control interface
