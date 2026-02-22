@@ -1,0 +1,18 @@
+# CODEOWNERS
+# GitHub will automatically request reviews from the owners listed below
+# whenever matching files are changed in a Pull Request.
+
+# Default owner (all files)
+*       @seanousv
+
+# GitHub metadata
+/.github/                @seanousv
+
+# ROS 2 workspace & package
+/seano_ca_ws/            @seanousv
+/seano_ca_ws/src/seano_vision/   @seanousv
+
+# Documentation
+/README.md               @seanousv
+/CONTRIBUTING.md         @seanousv
+/CHANGELOG.md            @seanousv
