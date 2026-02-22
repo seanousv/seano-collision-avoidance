@@ -1,0 +1,20 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it using the metadata below."
+title: "SEANO Collision Avoidance"
+type: software
+authors:
+  - family-names: "seanousv"
+    given-names: ""
+repository-code: "https://github.com/seanousv/seano-collision-avoidance"
+url: "https://github.com/seanousv/seano-collision-avoidance"
+license: "MIT"
+keywords:
+  - "USV"
+  - "collision avoidance"
+  - "ROS 2"
+  - "ArduPilot"
+  - "MAVROS"
+  - "computer vision"
+  - "robotics"
+  - "differential thrust"
+abstract: "Camera-based collision avoidance module for SEANO USV (ROS 2 Humble), validated using ArduPilot SITL ArduRover rover-skid and designed for Jetson deployment."
