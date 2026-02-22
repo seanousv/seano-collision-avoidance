@@ -27,13 +27,14 @@ Key vehicle constraint (critical for control design):
 
 ## Documentation
 
-- Architecture overview: `docs/ARCHITECTURE.md`
-- Simulation runbook (WSL2 + SITL + Mission Planner + MAVROS + SEANO): `docs/RUNBOOK.md`
-- Changelog: `CHANGELOG.md`
-- Contributing: `CONTRIBUTING.md`
-- Security policy: `SECURITY.md`
-- Support: `SUPPORT.md`
-- Citation: `CITATION.cff`
+- Architecture overview: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+- Simulation runbook (WSL2 + SITL + Mission Planner + MAVROS + SEANO): [docs/RUNBOOK.md](docs/RUNBOOK.md)
+- Changelog: [CHANGELOG.md](CHANGELOG.md)
+- Contributing: [CONTRIBUTING.md](CONTRIBUTING.md)
+- Security policy: [SECURITY.md](SECURITY.md)
+- Support: [SUPPORT.md](SUPPORT.md)
+- Citation: [CITATION.cff](CITATION.cff)
+- Code of conduct: [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
 
 
 ## Repository Structure
