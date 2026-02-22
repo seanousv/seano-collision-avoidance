@@ -26,6 +26,16 @@ Key vehicle constraint (critical for control design):
 - [Troubleshooting](#troubleshooting)
 ---
 
+## Documentation
+
+- Architecture overview: `docs/ARCHITECTURE.md`
+- Simulation runbook (WSL2 + SITL + Mission Planner + MAVROS + SEANO): `docs/RUNBOOK.md`
+- Changelog: `CHANGELOG.md`
+- Contributing: `CONTRIBUTING.md`
+- Security policy: `SECURITY.md`
+- Support: `SUPPORT.md`
+- Citation: `CITATION.cff`
+
 ````md
 ## Repository Structure
 
@@ -188,158 +198,16 @@ pip install ultralytics --no-deps
 pip install -r requirements.txt
 
 python -c "from ultralytics import YOLO; YOLO('yolov8n.pt'); print('MODEL_OK')"
+
 ```
 
----
+## CI
 
-## WSL2 Simulation Runbook
+This repository includes a ROS 2 Humble build workflow:
 
-Goal: a repeatable startup procedure that always works.
+* Workflow: `.github/workflows/ros2_ci.yml`
+* Status: shown via the CI badge above
 
-### Port Map (Baseline)
+## License
 
-* `14550/UDP`: Mission Planner (Windows)
-* `14551/UDP`: MAVROS ↔ SITL (WSL)
-* `5760/TCP`: MAVProxy/ArduPilot master (internal)
-
-WSL2 note:
-
-* Windows host IP seen from WSL changes between sessions.
-* Use the WSL default gateway.
-
----
-
-### Terminal 1 (WSL) — Start SITL (Rover Skid) + Outputs
-
-```bash
-cd ~/tools/ardupilot
-
-WIN_HOST_IP=$(ip route | awk '/default/ {print $3; exit}')
-echo "WIN_HOST_IP=$WIN_HOST_IP"
-
-sim_vehicle.py -v Rover -f rover-skid --console --map \
-  --out udp:${WIN_HOST_IP}:14550 \
-  --out udp:127.0.0.1:14551
-```
-
-Expected output:
-
-* MAVProxy console/map appears.
-* SITL shows outputs to both `14550` and `14551`.
-
----
-
-### Mission Planner (Windows) — Connect
-
-* Connection type: UDP
-* Port: 14550
-* Click Connect
-
-Expected output:
-
-* Vehicle status appears normally (mode/parameters/map).
-
----
-
-### Terminal 2 (WSL) — Start MAVROS
-
-```bash
-source /opt/ros/humble/setup.bash
-ros2 launch mavros apm.launch fcu_url:=udp://0.0.0.0:14551@127.0.0.1:14551
-```
-
-Expected output:
-
-* `/mavros/state` becomes `connected: true`.
-
----
-
-### Terminal 3 (WSL) — Monitor MAVROS State
-
-```bash
-source /opt/ros/humble/setup.bash
-ros2 topic echo /mavros/state
-```
-
-Expected output:
-
-* `connected: true`
-* `mode` readable (e.g., MANUAL)
-* `armed` reflects current state
-
----
-
-### Terminal 4 (WSL) — Start SEANO Stack
-
-```bash
-cd ~/seano-collision-avoidance/seano_ca_ws
-source /opt/ros/humble/setup.bash
-source install/setup.bash
-
-ros2 launch seano_vision run_auto_stack.launch.py
-```
-
-Expected output:
-
-* Nodes start without fatal errors.
-* Failsafe heartbeat publishes.
-
----
-
-## Validation Checklist
-
-1. MAVROS is connected:
-
-```bash
-ros2 topic echo /mavros/state
-# connected: true
-```
-
-2. Failsafe heartbeat runs:
-
-```bash
-ros2 topic hz /ca/failsafe_active
-# stable rate (e.g., ~10 Hz)
-```
-
-3. RC override is being published:
-
-```bash
-ros2 topic echo /mavros/rc/override
-# PWM changes when teleop/auto is active
-```
-
-4. Vehicle movement is visible in Mission Planner (map/track changes).
-
----
-
-## Troubleshooting
-
-### Mission Planner “Connect Failed”
-
-* Ensure SITL sends to Windows host IP from WSL:
-  `WIN_HOST_IP=$(ip route | awk '/default/ {print $3; exit}')`
-* Ensure SITL includes:
-  `--out udp:${WIN_HOST_IP}:14550`
-
-### `/mavros/state connected: false`
-
-* Start SITL first.
-* Ensure SITL outputs to `udp:127.0.0.1:14551`.
-* Ensure MAVROS uses:
-  `udp://0.0.0.0:14551@127.0.0.1:14551`
-* If SITL restarts, restart MAVROS too.
-
-### Vehicle does not move although PWM is published
-
-* Ensure vehicle is **ARMED**.
-* Ensure mode accepts RC override (commonly **MANUAL/STEERING** for testing).
-* Ensure the safety limiter is not forcing STOP (`FAILSAFE_STOP` logs).
-* Ensure there are no duplicate publishers overriding commands:
-  `ros2 topic info -v <topic>`
-
-### `install/local_setup.bash not found`
-
-* Workspace not built or wrong path sourced.
-* Correct file after build:
-  `~/seano-collision-avoidance/seano_ca_ws/install/setup.bash`
+MIT — see `LICENSE`.
