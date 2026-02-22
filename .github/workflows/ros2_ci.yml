@@ -1,0 +1,58 @@
+name: ROS2 Humble CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build:
+    name: Build seano_ca_ws (ROS2 Humble)
+    runs-on: ubuntu-22.04
+
+    # Use official ROS Humble base image to avoid apt-key issues on runners
+    container: ros:humble-ros-base-jammy
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install build tools
+        shell: bash
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            python3-pip \
+            python3-colcon-common-extensions \
+            python3-rosdep \
+            git
+          rm -rf /var/lib/apt/lists/*
+
+      - name: Initialize rosdep
+        shell: bash
+        run: |
+          rosdep init || true
+          rosdep update
+
+      - name: Install ROS dependencies (rosdep)
+        shell: bash
+        run: |
+          source /opt/ros/humble/setup.bash
+          cd seano_ca_ws
+          rosdep install --from-paths src --ignore-src -r -y
+
+      - name: Build workspace
+        shell: bash
+        run: |
+          source /opt/ros/humble/setup.bash
+          cd seano_ca_ws
+          colcon build --symlink-install
+
+      - name: Smoke test (package visible)
+        shell: bash
+        run: |
+          source /opt/ros/humble/setup.bash
+          cd seano_ca_ws
+          source install/setup.bash
+          ros2 pkg list | grep -q seano_vision
