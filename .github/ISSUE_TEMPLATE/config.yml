@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions / Discussion
+    url: https://github.com/seanousv/seano-collision-avoidance/discussions
+    about: Ask questions and discuss ideas here (recommended for non-bugs).
+  - name: Documentation
+    url: https://github.com/seanousv/seano-collision-avoidance#readme
+    about: Read the setup and runbook before creating an issue.
