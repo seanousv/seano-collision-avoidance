@@ -1,3 +1,5 @@
+[![ROS2 Humble CI](https://github.com/seanousv/seano-collision-avoidance/actions/workflows/ros2_ci.yml/badge.svg)](https://github.com/seanousv/seano-collision-avoidance/actions/workflows/ros2_ci.yml)
+
 # SEANO Collision Avoidance (ROS 2 Humble) — USV Differential Thruster
 
 This repository contains a **camera-based collision avoidance** module for the SEANO USV. The system is developed with **ROS 2 Humble**, validated first in simulation using **ArduPilot SITL (ArduRover rover-skid)**, and designed for deployment on **Jetson Orin Nano + CUAV X7+**.
