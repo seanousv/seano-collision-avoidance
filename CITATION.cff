@@ -5,7 +5,7 @@ type: software
 
 authors:
   - given-names: "Muhammad Naufal Haidar"
-    family-names: "seanousv"
+    family-names: "Rizq"
     email: "seanousv@gmail.com"
 
 repository-code: "https://github.com/seanousv/seano-collision-avoidance"
@@ -33,6 +33,6 @@ preferred-citation:
   title: "SEANO Collision Avoidance"
   authors:
     - given-names: "Muhammad Naufal Haidar"
-      family-names: "seanousv"
+      family-names: "Rizq"
   version: "0.1.0"
   url: "https://github.com/seanousv/seano-collision-avoidance"
