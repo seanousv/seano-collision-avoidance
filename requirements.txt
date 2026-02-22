@@ -1,0 +1,27 @@
+# SEANO Collision Avoidance - AI Python Dependencies
+# Use this in a dedicated venv (recommended).
+#
+# WSL (x86_64): pip install -r requirements.txt
+# Jetson (aarch64): install PyTorch/torchvision from JetPack/NVIDIA first,
+# then install Ultralytics manually (see instructions in chat), and finally:
+#   pip install -r requirements.txt
+
+# Core utilities
+numpy>=1.23
+PyYAML>=6.0
+tqdm>=4.66
+psutil>=5.9
+
+# CV runtime (Ultralytics needs cv2)
+opencv-python>=4.8
+
+# YOLO / Ultralytics
+# On Jetson, skip automatic install here; install manually after torch is ready.
+ultralytics>=8.1; platform_machine != "aarch64"
+
+# PyTorch (WSL/x86_64 only; on Jetson install from JetPack/NVIDIA)
+torch>=2.1; platform_machine != "aarch64"
+torchvision>=0.16; platform_machine != "aarch64"
+
+# Optional inference backends (WSL/x86_64). On Jetson use NVIDIA-recommended ONNXRuntime if needed.
+onnxruntime>=1.16; platform_machine != "aarch64"
