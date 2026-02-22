@@ -15,15 +15,14 @@ Key vehicle constraint (critical for control design):
 
 ## Table of Contents
 
+- [Documentation](#Documentation)
 - [Repository Structure](#repository-structure)
 - [System Overview](#system-overview)
 - [Prerequisites](#prerequisites)
 - [Build (ROS 2 Workspace)](#build-ros-2-workspace)
 - [AI Environment (WSL x86_64)](#ai-environment-wsl-x86_64)
 - [AI Environment (Jetson aarch64)](#ai-environment-jetson-aarch64)
-- [WSL2 Simulation Runbook](#wsl2-simulation-runbook)
-- [Validation Checklist](#validation-checklist)
-- [Troubleshooting](#troubleshooting)
+- [CI](#ci)
 ---
 
 ## Documentation
@@ -36,9 +35,9 @@ Key vehicle constraint (critical for control design):
 - Support: `SUPPORT.md`
 - Citation: `CITATION.cff`
 
-````md
-## Repository Structure
 
+## Repository Structure
+````md
 seano-collision-avoidance/
 ├── seano_ca_ws/                      # ROS 2 workspace (colcon)
 │   └── src/
@@ -208,6 +207,3 @@ This repository includes a ROS 2 Humble build workflow:
 * Workflow: `.github/workflows/ros2_ci.yml`
 * Status: shown via the CI badge above
 
-## License
-
-MIT — see `LICENSE`.
