@@ -1,0 +1,64 @@
+[tool.black]
+line-length = 100
+target-version = ["py310"]
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  \.git
+| \.github
+| \.venv.*
+| \.venv
+| seano_ca_ws/build
+| seano_ca_ws/install
+| seano_ca_ws/log
+| build
+| install
+| log
+| tools
+| docs
+)/
+'''
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+fix = true
+show-fixes = true
+
+# Lint only Python sources (keep it safe for ROS2 packages)
+extend-exclude = [
+  ".git",
+  ".github",
+  ".venv",
+  ".venv_ai",
+  "seano_ca_ws/build",
+  "seano_ca_ws/install",
+  "seano_ca_ws/log",
+  "build",
+  "install",
+  "log",
+  "tools",
+  "docs",
+]
+
+[tool.ruff.lint]
+# Conservative, practical ruleset:
+# E/F: pycodestyle/pyflakes, I: import order, B: bugbear
+select = ["E", "F", "I", "B"]
+ignore = [
+  "E501",  # line length handled by black
+]
+
+[tool.ruff.lint.isort]
+combine-as-imports = true
+force-sort-within-sections = true
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+addopts = "-q"
+testpaths = ["seano_ca_ws/src/seano_vision"]
