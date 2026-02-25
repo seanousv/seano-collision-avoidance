@@ -1,55 +1,46 @@
 camera_hp:
   ros__parameters:
     # ========= INPUT SOURCE =========
-    # device = USB webcam (UVC)
-    # url    = RTSP/HTTP (kalau nanti balik ke stream)
-    # pipeline = string gstreamer manual
     source: "device"
-    backend: "opencv"          # untuk USB di WSL biasanya paling stabil pakai opencv (CAP_V4L2)
+    backend: "opencv"
 
-    # Untuk device, pakai salah satu:
-    device_index: 0            # 0 atau 1 (karena kamu punya /dev/video0 dan /dev/video1)
-    device_path: "/dev/video0"            # kalau mau paksa: "/dev/video0" atau "/dev/video1" (kosongkan jika pakai index)
+    # Pakai device yang sudah terbukti stabil di WSL
+    device_index: 0
+    device_path: "/dev/video0"
 
-    # Paksa format webcam (disarankan MJPG agar 720p@30fps ringan)
-    device_fourcc: "MJPG"      # alternatif: "YUYV" kalau MJPG bermasalah
-    device_width: 1280
-    device_height: 720
+    # Kunci format ringan untuk WSL
+    device_fourcc: "MJPG"
+    device_width: 640
+    device_height: 480
     device_fps: 30
 
-    # Dipakai kalau source=url atau source=pipeline
-    url: "dev=0"
-    pipeline: ""
-
     # ========= PUBLISHING =========
-    publish_in_reader: true    # publish langsung dari reader thread (latency lebih kecil)
-    max_fps: 15.0              # rate publish output (lebih kecil dari device_fps untuk hemat CPU)
-    max_age_ms: 120            # drop frame kalau terlalu tua
-    grab_skip: 0               # 0 = tidak skip; 1 = skip 1 frame tiap publish (hemat load)
+    # Matikan publish dari reader thread supaya shutdown aman
+    publish_in_reader: false
+
+    # Target publish ROS
+    max_fps: 15.0
+    max_age_ms: 120
+    grab_skip: 0
 
     # ========= OUTPUT IMAGE =========
-    output_encoding: "bgr8"    # bgr8 (umum untuk OpenCV) atau rgb8
-    swap_rb: true             # true kalau warna kebalik
-
-    # ========= TRANSFORM =========
-    rotate: 0                  # 0/90/180/270
-    flip_h: false
-    flip_v: false
-    resize_width: 0            # 0 = no resize
-    resize_height: 0
+    output_encoding: "bgr8"
+    # Untuk uji FPS, matikan swap (swap itu kerja ekstra). Nanti kalau butuh warna benar, baru dinyalakan.
+    swap_rb: false
 
     # ========= TOPICS + QoS =========
+    # Kunci 1 topic dulu agar FPS tidak “kebagi”
     publish_best_effort: true
-    publish_reliable: true
+    publish_reliable: false
     topic_best_effort: "/camera/image_raw"
     topic_reliable: "/camera/image_raw_reliable"
     frame_id: "camera"
 
     # ========= RECONNECT / LOG =========
-    reconnect_sec: 0.5         # retry open/read kalau gagal
-    log_stats_sec: 2.0         # print stats tiap 2 detik (cap_fps/pub_fps/age)
+    reconnect_sec: 0.5
+    log_stats_sec: 2.0
 
-    # ========= LEGACY (biar aman kalau param masih dibaca launch lama) =========
+    # ========= LEGACY =========
     gstreamer_latency_ms: 80
     rtsp_tcp: true
     prefer_h264_pipeline: false

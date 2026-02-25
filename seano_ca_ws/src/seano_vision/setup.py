@@ -9,7 +9,7 @@ package_name = "seano_vision"
 
 # colcon/ament kadang memanggil setup.py dengan argumen yang tidak didukung
 # oleh distutils/setuptools tertentu. Kita buang argumen tsb agar build lanjut.
-def _strip_flag(flag: str, takes_value: bool = False):
+def _strip_flag(flag: str, takes_value: bool = False) -> None:
     while flag in sys.argv:
         i = sys.argv.index(flag)
         sys.argv.pop(i)
@@ -18,11 +18,11 @@ def _strip_flag(flag: str, takes_value: bool = False):
             sys.argv.pop(i)
 
 
-def _strip_flag_prefix(prefix: str, takes_value: bool = False):
+def _strip_flag_prefix(prefix: str, takes_value: bool = False) -> None:
     # handle bentuk: --flag=value
     new_argv = []
     skip_next = False
-    for _i, a in enumerate(sys.argv):
+    for a in sys.argv:
         if skip_next:
             skip_next = False
             continue
@@ -36,7 +36,7 @@ def _strip_flag_prefix(prefix: str, takes_value: bool = False):
     sys.argv[:] = new_argv
 
 
-# buang argumen yang terbukti bikin error di kamu
+# buang argumen yang terbukti bikin error di environment kamu
 _strip_flag("--editable", takes_value=False)
 _strip_flag("--build-directory", takes_value=True)
 _strip_flag_prefix("--build-directory", takes_value=False)
@@ -82,6 +82,7 @@ setup(
             "command_mux_node = seano_vision.command_mux_node:main",
             "thrsteer_to_auto_left_right_node = seano_vision.thrsteer_to_auto_left_right_node:main",
             "auto_controller_stub_node = seano_vision.auto_controller_stub_node:main",
+            "test_maneuver_node = seano_vision.test_maneuver_node:main",
         ],
     },
 )

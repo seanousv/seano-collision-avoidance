@@ -2,43 +2,33 @@
 # -*- coding: utf-8 -*-
 
 """
-ActuatorSafetyLimiterNode (SEANO)
+ActuatorSafetyLimiterNode (SEANO) - FINAL LIMITER AFTER MUX
 
-Input:
-  - /ca/command (std_msgs/String)  : perintah high-level (HOLD/SLOW/STOP/TURN_LEFT/...)
-  - /ca/failsafe_active (std_msgs/Bool) : optional failsafe dari watchdog/quality
+Tujuan:
+- Node ini adalah "pagar terakhir" sebelum bridge ke MAVROS.
+- Dia mengambil output dari MUX (/seano/selected/left_cmd & right_cmd),
+  lalu menerapkan:
+  1) failsafe dari watchdog (/ca/failsafe_active)
+  2) timeout input (kalau command berhenti publish -> STOP)
+  3) clamp + slew-rate limiter (gerak halus)
 
-Output (recommended / final):
-  - /seano/auto/left_cmd  (std_msgs/Float32) : 0..1 (atau -1..1 jika allow_reverse)
-  - /seano/auto/right_cmd (std_msgs/Float32)
+Arsitektur yang disarankan:
+teleop/manual + auto -> command_mux -> selected left/right -> [THIS NODE] -> /seano/left_cmd /seano/right_cmd -> mavros_rc_override_bridge
 
-Optional (legacy/debug):
-  - /seano/throttle_cmd (Float32)
-  - /seano/rudder_cmd   (Float32)
-  - /seano/cmd_vel      (geometry_msgs/Twist)
-  - /seano/command_final (String)
-
-Catatan:
-- Node ini sekarang bisa langsung cocok dengan arsitektur kamu:
-  CA -> limiter -> /seano/auto/left/right -> mux -> bridge -> MAVROS.
-- Jadi kamu tidak perlu adapter thr/rud -> left/right lagi kalau publish_left_right=True.
+Default:
+- Input:  /seano/selected/left_cmd, /seano/selected/right_cmd
+- Output: /seano/left_cmd, /seano/right_cmd
+- Failsafe: /ca/failsafe_active (Bool)
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import math
 import time
 
-from geometry_msgs.msg import Twist
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import Bool, Float32, String
-
-
-@dataclass
-class ActuatorCmd:
-    throttle: float  # 0..1 (atau -1..1 jika reverse)
-    rudder: float  # -1..1
 
 
 def clamp(x: float, lo: float, hi: float) -> float:
@@ -57,274 +47,169 @@ def slew_limit(current: float, target: float, rate_per_s: float, dt: float) -> f
     return target
 
 
+def is_finite(x: float) -> bool:
+    return isinstance(x, (int, float)) and math.isfinite(float(x))
+
+
 class ActuatorSafetyLimiterNode(Node):
     def __init__(self) -> None:
         super().__init__("actuator_safety_limiter_node")
 
-        # ---------- Topics (input) ----------
-        self.declare_parameter("command_topic", "/ca/command")
+        # ---------- Topics ----------
+        self.declare_parameter("in_left_topic", "/seano/selected/left_cmd")
+        self.declare_parameter("in_right_topic", "/seano/selected/right_cmd")
         self.declare_parameter("failsafe_active_topic", "/ca/failsafe_active")
 
-        # ---------- Topics (output) ----------
-        # Final output for your TA architecture:
-        self.declare_parameter("out_left_topic", "/seano/auto/left_cmd")
-        self.declare_parameter("out_right_topic", "/seano/auto/right_cmd")
+        self.declare_parameter("out_left_topic", "/seano/left_cmd")
+        self.declare_parameter("out_right_topic", "/seano/right_cmd")
 
-        # Legacy/debug outputs (optional):
-        self.declare_parameter("out_throttle_topic", "/seano/throttle_cmd")
-        self.declare_parameter("out_rudder_topic", "/seano/rudder_cmd")
-        self.declare_parameter("out_twist_topic", "/seano/cmd_vel")
-        self.declare_parameter("out_command_final_topic", "/seano/command_final")
-
-        # ---------- Mapping (command -> target thr/rud) ----------
-        self.declare_parameter("throttle_hold", 0.35)
-        self.declare_parameter("throttle_slow", 0.20)
-        self.declare_parameter("throttle_stop", 0.0)
-
-        self.declare_parameter("rudder_hold", 0.0)
-        self.declare_parameter("rudder_turn_slow", 0.35)
-        self.declare_parameter("rudder_turn", 0.55)
+        # Debug/info
+        self.declare_parameter("reason_topic", "/seano/limiter_reason")
+        self.declare_parameter("log_stats_sec", 1.0)
 
         # ---------- Safety / timing ----------
-        self.declare_parameter("command_timeout_s", 1.0)
-        self.declare_parameter("failsafe_timeout_s", 2.0)
-        # kalau failsafe topic tidak ada / stale, dianggap active atau tidak
+        self.declare_parameter("input_timeout_s", 0.6)  # kalau selected cmd stale -> STOP
+        self.declare_parameter("failsafe_timeout_s", 2.0)  # kalau failsafe topic stale
         self.declare_parameter("failsafe_stale_is_active", True)
 
         self.declare_parameter("loop_hz", 20.0)
 
-        # Slew limiter
-        self.declare_parameter("slew_throttle_per_s", 0.8)
-        self.declare_parameter("slew_rudder_per_s", 1.5)
-        self.declare_parameter("slew_left_per_s", 0.8)
-        self.declare_parameter("slew_right_per_s", 0.8)
-
-        # Output options
-        self.declare_parameter("publish_left_right", True)  # <- ini yang kamu mau
-        self.declare_parameter("publish_thr_steer", False)  # matikan biar tidak membingungkan
-        self.declare_parameter("publish_twist", False)  # optional
-        self.declare_parameter("unknown_command_policy", "HOLD")  # HOLD / STOP
-
-        # Differential mix
-        self.declare_parameter("diff_mix_gain", 0.7)
-        self.declare_parameter("allow_reverse", False)
-        self.declare_parameter("invert_rudder", False)
-
-        # If you want this node to switch mux into AUTO automatically:
-        self.declare_parameter("auto_enable_topic", "/seano/auto_enable")
-        self.declare_parameter("auto_enable_on_start", False)
-        self.declare_parameter("auto_enable_keepalive_hz", 1.0)
-        self._pub_auto_enable = self.create_publisher(
-            Bool, self.get_parameter("auto_enable_topic").value, 10
-        )
+        # ---------- Output shaping ----------
+        self.declare_parameter("allow_reverse", False)  # default USV kamu 0..1
+        self.declare_parameter("deadband", 0.0)  # misal 0.02 kalau mau
+        self.declare_parameter("slew_left_per_s", 1.2)
+        self.declare_parameter("slew_right_per_s", 1.2)
 
         # ---------- State ----------
-        self.last_cmd_str: str = "HOLD_COURSE"
-        self.last_cmd_time: float = 0.0
+        self._last_left_in = 0.0
+        self._last_right_in = 0.0
+        self._t_left = 0.0
+        self._t_right = 0.0
 
-        self.last_failsafe_active: bool = False
-        self.last_failsafe_time: float = 0.0
+        self._failsafe_active = False
+        self._t_failsafe = 0.0
 
-        self.throttle_cmd: float = 0.0
-        self.rudder_cmd: float = 0.0
-        self.left_cmd: float = 0.0
-        self.right_cmd: float = 0.0
+        self._left_out = 0.0
+        self._right_out = 0.0
 
         self._last_tick = time.time()
-        self._last_reason_print = 0.0
+        self._last_log = 0.0
+        self._last_reason = ""
 
         # ---------- I/O ----------
-        cmd_topic = self.get_parameter("command_topic").value
-        fs_topic = self.get_parameter("failsafe_active_topic").value
+        in_left = str(self.get_parameter("in_left_topic").value)
+        in_right = str(self.get_parameter("in_right_topic").value)
+        fs_topic = str(self.get_parameter("failsafe_active_topic").value)
 
-        self.create_subscription(String, cmd_topic, self._on_command, 10)
+        out_left = str(self.get_parameter("out_left_topic").value)
+        out_right = str(self.get_parameter("out_right_topic").value)
+        reason_topic = str(self.get_parameter("reason_topic").value)
+
+        self.create_subscription(Float32, in_left, self._on_left, 10)
+        self.create_subscription(Float32, in_right, self._on_right, 10)
         self.create_subscription(Bool, fs_topic, self._on_failsafe, 10)
 
-        # final output pubs
-        self.pub_left = self.create_publisher(
-            Float32, self.get_parameter("out_left_topic").value, 10
-        )
-        self.pub_right = self.create_publisher(
-            Float32, self.get_parameter("out_right_topic").value, 10
-        )
-
-        # optional pubs
-        self.pub_thr = self.create_publisher(
-            Float32, self.get_parameter("out_throttle_topic").value, 10
-        )
-        self.pub_rud = self.create_publisher(
-            Float32, self.get_parameter("out_rudder_topic").value, 10
-        )
-        self.pub_twist = self.create_publisher(
-            Twist, self.get_parameter("out_twist_topic").value, 10
-        )
-        self.pub_final = self.create_publisher(
-            String, self.get_parameter("out_command_final_topic").value, 10
-        )
+        self.pub_left = self.create_publisher(Float32, out_left, 10)
+        self.pub_right = self.create_publisher(Float32, out_right, 10)
+        self.pub_reason = self.create_publisher(String, reason_topic, 10)
 
         loop_hz = float(self.get_parameter("loop_hz").value)
         loop_hz = 20.0 if loop_hz <= 0 else loop_hz
         self.create_timer(1.0 / loop_hz, self._on_tick)
 
-        keep_hz = float(self.get_parameter("auto_enable_keepalive_hz").value)
-        if keep_hz > 0:
-            self.create_timer(1.0 / keep_hz, self._auto_enable_keepalive)
-
-        if bool(self.get_parameter("auto_enable_on_start").value):
-            self._pub_auto_enable.publish(Bool(data=True))
-
         self.get_logger().info(
-            f"Started | cmd={cmd_topic} failsafe={fs_topic} | loop={loop_hz:.1f}Hz"
+            "Started | "
+            f"in=({in_left},{in_right}) fs={fs_topic} "
+            f"out=({out_left},{out_right}) loop={loop_hz:.1f}Hz"
         )
 
-    def _auto_enable_keepalive(self):
-        if bool(self.get_parameter("auto_enable_on_start").value):
-            self._pub_auto_enable.publish(Bool(data=True))
+    def _on_left(self, msg: Float32) -> None:
+        v = float(msg.data)
+        if is_finite(v):
+            self._last_left_in = v
+            self._t_left = time.time()
 
-    def _on_command(self, msg: String) -> None:
-        self.last_cmd_str = (msg.data or "").strip()
-        self.last_cmd_time = time.time()
+    def _on_right(self, msg: Float32) -> None:
+        v = float(msg.data)
+        if is_finite(v):
+            self._last_right_in = v
+            self._t_right = time.time()
 
     def _on_failsafe(self, msg: Bool) -> None:
-        self.last_failsafe_active = bool(msg.data)
-        self.last_failsafe_time = time.time()
-
-    def _map_command_to_target(self, cmd: str) -> ActuatorCmd:
-        thr_hold = float(self.get_parameter("throttle_hold").value)
-        thr_slow = float(self.get_parameter("throttle_slow").value)
-        thr_stop = float(self.get_parameter("throttle_stop").value)
-
-        rud_hold = float(self.get_parameter("rudder_hold").value)
-        rud_turn_slow = float(self.get_parameter("rudder_turn_slow").value)
-        rud_turn = float(self.get_parameter("rudder_turn").value)
-
-        c = cmd.upper().strip()
-
-        if c in ("HOLD", "HOLD_COURSE", "KEEP", "KEEP_COURSE"):
-            return ActuatorCmd(thr_hold, rud_hold)
-
-        if c in ("SLOW", "SLOW_DOWN", "DECELERATE"):
-            return ActuatorCmd(thr_slow, rud_hold)
-
-        if c in ("STOP", "BRAKE", "EMERGENCY_STOP"):
-            return ActuatorCmd(thr_stop, rud_hold)
-
-        if c in ("TURN_LEFT_SLOW", "LEFT_SLOW"):
-            return ActuatorCmd(thr_slow, -abs(rud_turn_slow))
-
-        if c in ("TURN_RIGHT_SLOW", "RIGHT_SLOW"):
-            return ActuatorCmd(thr_slow, abs(rud_turn_slow))
-
-        if c in ("TURN_LEFT", "LEFT"):
-            return ActuatorCmd(thr_hold, -abs(rud_turn))
-
-        if c in ("TURN_RIGHT", "RIGHT"):
-            return ActuatorCmd(thr_hold, abs(rud_turn))
-
-        policy = str(self.get_parameter("unknown_command_policy").value).upper()
-        if policy == "STOP":
-            return ActuatorCmd(thr_stop, rud_hold)
-        return ActuatorCmd(thr_hold, rud_hold)
+        self._failsafe_active = bool(msg.data)
+        self._t_failsafe = time.time()
 
     def _on_tick(self) -> None:
         now = time.time()
         dt = max(1e-3, now - self._last_tick)
         self._last_tick = now
 
-        cmd_timeout = float(self.get_parameter("command_timeout_s").value)
+        input_timeout = float(self.get_parameter("input_timeout_s").value)
         fs_timeout = float(self.get_parameter("failsafe_timeout_s").value)
-        stale_is_active = bool(self.get_parameter("failsafe_stale_is_active").value)
-
-        # Ages
-        cmd_age = now - self.last_cmd_time if self.last_cmd_time > 0 else 1e9
-        fs_age = now - self.last_failsafe_time if self.last_failsafe_time > 0 else 1e9
-
-        cmd_ok = cmd_age <= cmd_timeout
-        fs_stale = fs_age > fs_timeout
-
-        # Failsafe decision
-        failsafe_active = self.last_failsafe_active or (fs_stale and stale_is_active)
-
-        # Final cmd decision
-        final_cmd = self.last_cmd_str if cmd_ok else "STOP"
-        reason = "ok"
-        if not cmd_ok:
-            reason = f"cmd_timeout({cmd_age:.2f}s)"
-        if failsafe_active:
-            final_cmd = "STOP"
-            reason = (
-                "failsafe_true" if self.last_failsafe_active else f"failsafe_stale({fs_age:.2f}s)"
-            )
-
-        # Print reason periodically
-        if now - self._last_reason_print > 1.0:
-            self._last_reason_print = now
-            self.get_logger().info(
-                f"final={final_cmd} reason={reason} cmd_age={cmd_age:.2f}s fs_age={fs_age:.2f}s"
-            )
-
-        # Map to target thr/rud
-        target = self._map_command_to_target(final_cmd)
-        if bool(self.get_parameter("invert_rudder").value):
-            target = ActuatorCmd(target.throttle, -target.rudder)
+        fs_stale_is_active = bool(self.get_parameter("failsafe_stale_is_active").value)
 
         allow_reverse = bool(self.get_parameter("allow_reverse").value)
+        deadband = float(self.get_parameter("deadband").value)
 
-        # Slew thr/rud
-        self.throttle_cmd = slew_limit(
-            self.throttle_cmd,
-            target.throttle,
-            float(self.get_parameter("slew_throttle_per_s").value),
-            dt,
-        )
-        self.rudder_cmd = slew_limit(
-            self.rudder_cmd, target.rudder, float(self.get_parameter("slew_rudder_per_s").value), dt
-        )
+        slew_l = float(self.get_parameter("slew_left_per_s").value)
+        slew_r = float(self.get_parameter("slew_right_per_s").value)
 
-        # Clamp thr/rud
-        if allow_reverse:
-            self.throttle_cmd = clamp(self.throttle_cmd, -1.0, 1.0)
+        # Ages
+        left_age = now - self._t_left if self._t_left > 0 else 1e9
+        right_age = now - self._t_right if self._t_right > 0 else 1e9
+        fs_age = now - self._t_failsafe if self._t_failsafe > 0 else 1e9
+
+        input_stale = (left_age > input_timeout) or (right_age > input_timeout)
+        fs_stale = fs_age > fs_timeout
+
+        failsafe_active = self._failsafe_active or (fs_stale and fs_stale_is_active)
+
+        # Decide target
+        reason = "ok"
+        if failsafe_active:
+            target_left = 0.0
+            target_right = 0.0
+            reason = "failsafe_true" if self._failsafe_active else f"failsafe_stale({fs_age:.2f}s)"
+        elif input_stale:
+            target_left = 0.0
+            target_right = 0.0
+            reason = f"input_stale(L={left_age:.2f}s R={right_age:.2f}s)"
         else:
-            self.throttle_cmd = clamp(self.throttle_cmd, 0.0, 1.0)
-        self.rudder_cmd = clamp(self.rudder_cmd, -1.0, 1.0)
+            target_left = float(self._last_left_in)
+            target_right = float(self._last_right_in)
 
-        # Mix to left/right (final)
-        gain = float(self.get_parameter("diff_mix_gain").value)
-        left_target = self.throttle_cmd + gain * self.rudder_cmd
-        right_target = self.throttle_cmd - gain * self.rudder_cmd
+        # Clamp range
+        lo, hi = (-1.0, 1.0) if allow_reverse else (0.0, 1.0)
+        target_left = clamp(target_left, lo, hi)
+        target_right = clamp(target_right, lo, hi)
 
-        if allow_reverse:
-            left_target = clamp(left_target, -1.0, 1.0)
-            right_target = clamp(right_target, -1.0, 1.0)
-        else:
-            left_target = clamp(left_target, 0.0, 1.0)
-            right_target = clamp(right_target, 0.0, 1.0)
+        # Deadband
+        if abs(target_left) < deadband:
+            target_left = 0.0
+        if abs(target_right) < deadband:
+            target_right = 0.0
 
-        # Slew left/right
-        self.left_cmd = slew_limit(
-            self.left_cmd, left_target, float(self.get_parameter("slew_left_per_s").value), dt
-        )
-        self.right_cmd = slew_limit(
-            self.right_cmd, right_target, float(self.get_parameter("slew_right_per_s").value), dt
-        )
+        # Slew
+        self._left_out = slew_limit(self._left_out, target_left, slew_l, dt)
+        self._right_out = slew_limit(self._right_out, target_right, slew_r, dt)
 
-        # Publish final command string (debug)
-        self.pub_final.publish(String(data=str(final_cmd)))
+        # Publish
+        self.pub_left.publish(Float32(data=float(self._left_out)))
+        self.pub_right.publish(Float32(data=float(self._right_out)))
 
-        # Publish chosen outputs
-        if bool(self.get_parameter("publish_left_right").value):
-            self.pub_left.publish(Float32(data=float(self.left_cmd)))
-            self.pub_right.publish(Float32(data=float(self.right_cmd)))
+        # Publish reason only when changed (biar tidak spam)
+        if reason != self._last_reason:
+            self._last_reason = reason
+            self.pub_reason.publish(String(data=reason))
 
-        if bool(self.get_parameter("publish_thr_steer").value):
-            self.pub_thr.publish(Float32(data=float(self.throttle_cmd)))
-            self.pub_rud.publish(Float32(data=float(self.rudder_cmd)))
-
-        if bool(self.get_parameter("publish_twist").value):
-            tw = Twist()
-            tw.linear.x = float(self.throttle_cmd)
-            tw.angular.z = float(self.rudder_cmd)
-            self.pub_twist.publish(tw)
+        # Periodic log
+        log_stats_sec = float(self.get_parameter("log_stats_sec").value)
+        if log_stats_sec > 0 and (now - self._last_log) > log_stats_sec:
+            self._last_log = now
+            self.get_logger().info(
+                f"reason={reason} | in_age L={left_age:.2f}s R={right_age:.2f}s fs_age={fs_age:.2f}s | "
+                f"out L={self._left_out:.2f} R={self._right_out:.2f}"
+            )
 
 
 def main(args=None) -> None:
