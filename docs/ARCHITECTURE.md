@@ -13,18 +13,18 @@ This document describes the runtime architecture and ROS 2 interfaces used by th
 ```mermaid
 flowchart LR
   subgraph Inputs
-    KBD["Keyboard Teleop"] --> M1["/seano/manual (left_cmd, right_cmd)"]
-    AUTO["Autonomy Logic (risk/planner)"] --> A1["/seano/auto (left_cmd, right_cmd)"]
+    KBD["Keyboard Teleop"] --> M1["/seano/manual/left_cmd & /seano/manual/right_cmd"]
+    AUTO["Autonomy Logic (risk/planner)"] --> A1["/seano/auto/left_cmd & /seano/auto/right_cmd"]
     EN["/seano/auto_enable (Bool)"] --> MUX
     FS["/ca/failsafe_active (Bool)"] --> LIM
   end
 
   M1 --> MUX["Command MUX"]
   A1 --> MUX
-  MUX --> SEL["/seano/selected (left_cmd, right_cmd)"]
+  MUX --> SEL["/seano/selected/left_cmd & /seano/selected/right_cmd"]
 
   SEL --> LIM["Safety Limiter"]
-  LIM --> OUT["/seano (left_cmd, right_cmd)"]
+  LIM --> OUT["/seano/left_cmd & /seano/right_cmd"]
 
   OUT --> BR["RC Override Bridge"]
   BR --> RC["/mavros/rc/override"]
@@ -46,8 +46,8 @@ This avoids ambiguity that can appear when using throttle + steering on skid/dif
 * Purpose: manual control using keyboard input (e.g., WASD)
 * Publishes:
 
-  * `/seano/manual/left_cmd` (Float32)
-  * `/seano/manual/right_cmd` (Float32)
+  * `/seano/manual/left_cmd` (std_msgs/Float32)
+  * `/seano/manual/right_cmd` (std_msgs/Float32)
 
 ### 2) `command_mux_node`
 
@@ -56,7 +56,7 @@ This avoids ambiguity that can appear when using throttle + steering on skid/dif
 
   * `/seano/manual/left_cmd`, `/seano/manual/right_cmd`
   * `/seano/auto/left_cmd`, `/seano/auto/right_cmd`
-  * `/seano/auto_enable` (Bool)
+  * `/seano/auto_enable` (std_msgs/Bool)
 * Outputs:
 
   * `/seano/selected/left_cmd`
@@ -73,7 +73,7 @@ This avoids ambiguity that can appear when using throttle + steering on skid/dif
 * Inputs:
 
   * `/seano/selected/left_cmd`, `/seano/selected/right_cmd`
-  * `/ca/failsafe_active` (Bool)
+  * `/ca/failsafe_active` (std_msgs/Bool)
 * Outputs:
 
   * `/seano/left_cmd`
@@ -98,8 +98,8 @@ This avoids ambiguity that can appear when using throttle + steering on skid/dif
 | `/seano/auto/left_cmd`      | std_msgs/Float32         | pub       | autonomy left command                    |
 | `/seano/auto/right_cmd`     | std_msgs/Float32         | pub       | autonomy right command                   |
 | `/seano/auto_enable`        | std_msgs/Bool            | pub       | enables autonomous selection in MUX      |
-| `/seano/selected/left_cmd`  | std_msgs/Float32         | pub       | mux output                               |
-| `/seano/selected/right_cmd` | std_msgs/Float32         | pub       | mux output                               |
+| `/seano/selected/left_cmd`  | std_msgs/Float32         | pub       | mux output (pre-limiter)                 |
+| `/seano/selected/right_cmd` | std_msgs/Float32         | pub       | mux output (pre-limiter)                 |
 | `/ca/failsafe_active`       | std_msgs/Bool            | pub       | safety state (heartbeat + fail triggers) |
 | `/seano/left_cmd`           | std_msgs/Float32         | pub       | final left command (post limiter)        |
 | `/seano/right_cmd`          | std_msgs/Float32         | pub       | final right command (post limiter)       |
@@ -120,3 +120,5 @@ This avoids ambiguity that can appear when using throttle + steering on skid/dif
   2. MAVROS connectivity (`/mavros/state`)
   3. RC override publishing (`/mavros/rc/override`)
   4. vehicle response (map/track changes in GCS)
+
+```

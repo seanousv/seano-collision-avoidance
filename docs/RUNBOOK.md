@@ -1,28 +1,28 @@
 # Runbook (WSL2 Simulation) — SITL + Mission Planner + MAVROS + SEANO
 
-This runbook provides a repeatable startup procedure for the simulation stack.
+Runbook ini berisi prosedur startup simulasi yang repeatable untuk stack: ArduPilot SITL (WSL) + Mission Planner (Windows) + MAVROS2 (WSL) + SEANO ROS 2.
 
 ## Baseline Port Map
 
 - Mission Planner (Windows): `14550/UDP`
 - MAVROS ↔ SITL (WSL): `14551/UDP`
-- MAVProxy/ArduPilot master (internal): `5760/TCP`
+- MAVProxy/ArduPilot master (internal): `5760/TCP` (umumnya)
 
-WSL2 note:
-- Windows host IP as seen from WSL can change each session.
-- Always compute it from the WSL default gateway.
+Catatan WSL2:
+- IP Windows host yang terlihat dari WSL bisa berubah setiap sesi.
+- IP Windows host selalu diambil dari default gateway WSL: `ip route`.
 
 ---
 
-## Startup Order (Required)
+## Startup Order (Wajib)
 
-Start components in this order:
+Komponen harus dijalankan berurutan:
 1) ArduPilot SITL (WSL)
 2) Mission Planner (Windows)
 3) MAVROS2 (WSL)
 4) SEANO ROS 2 stack (WSL)
 
-If SITL is restarted, restart MAVROS as well.
+Jika SITL di-restart, MAVROS harus di-restart.
 
 ---
 
@@ -41,8 +41,11 @@ sim_vehicle.py -v Rover -f rover-skid --console --map \
 
 Expected:
 
-* MAVProxy console and map open.
-* SITL outputs to both MP (14550) and MAVROS (14551).
+* MAVProxy console dan map terbuka.
+* SITL mengirim MAVLink ke:
+
+  * Mission Planner (Windows) `WIN_HOST_IP:14550`
+  * MAVROS (WSL) `127.0.0.1:14551`
 
 ---
 
@@ -50,12 +53,12 @@ Expected:
 
 * Connection type: UDP
 * Port: 14550
-* Click Connect
+* Klik Connect
 
 Expected:
 
-* Vehicle status visible (mode/params).
-* Map shows vehicle.
+* Vehicle status terlihat (mode/params).
+* Map menampilkan vehicle.
 
 ---
 
@@ -68,11 +71,11 @@ ros2 launch mavros apm.launch fcu_url:=udp://0.0.0.0:14551@127.0.0.1:14551
 
 Expected:
 
-* `/mavros/state` becomes `connected: true`.
+* `/mavros/state` menjadi `connected: true`.
 
 ---
 
-## Terminal 3 (WSL) — Monitor MAVROS state
+## Terminal 3 (WSL) — Monitor MAVROS state (opsional)
 
 ```bash
 source /opt/ros/humble/setup.bash
@@ -82,8 +85,8 @@ ros2 topic echo /mavros/state
 Expected:
 
 * `connected: true`
-* `mode` readable
-* `armed` reflects current state
+* `mode` terbaca
+* `armed` sesuai kondisi
 
 ---
 
@@ -99,8 +102,8 @@ ros2 launch seano_vision run_auto_stack.launch.py
 
 Expected:
 
-* Nodes start without fatal errors.
-* Failsafe heartbeat publishes (`/ca/failsafe_active`).
+* Node berjalan tanpa fatal error.
+* Heartbeat failsafe ter-publish: `/ca/failsafe_active`.
 
 ---
 
@@ -109,7 +112,7 @@ Expected:
 ### 1) MAVROS connected
 
 ```bash
-ros2 topic echo /mavros/state
+ros2 topic echo /mavros/state -n 1
 ```
 
 ### 2) Failsafe heartbeat frequency
@@ -118,37 +121,152 @@ ros2 topic echo /mavros/state
 ros2 topic hz /ca/failsafe_active
 ```
 
-### 3) RC override publishing
+### 3) RC override publishing (jika sedang uji aktuasi)
 
 ```bash
-ros2 topic echo /mavros/rc/override
+ros2 topic echo /mavros/rc/override -n 5
 ```
 
-### 4) Duplicate publisher check (if behavior is inconsistent)
+### 4) Duplicate publisher check (jika perilaku aneh / “nyangkut”)
 
 ```bash
 ros2 topic info -v /seano/auto/left_cmd
 ros2 topic info -v /seano/auto/right_cmd
+ros2 topic info -v /seano/manual/left_cmd
+ros2 topic info -v /seano/manual/right_cmd
 ```
 
 ---
 
 ## Common Failure Modes
 
-### Mission Planner cannot connect
+### Mission Planner tidak bisa connect
 
-* Confirm `WIN_HOST_IP` was computed via `ip route`.
-* Confirm SITL includes `--out udp:${WIN_HOST_IP}:14550`.
+* Pastikan `WIN_HOST_IP` diambil dari `ip route`.
+* Pastikan SITL memuat: `--out udp:${WIN_HOST_IP}:14550`.
 
-### MAVROS connected: false
+### MAVROS `connected: false`
 
-* Confirm SITL is running and outputs `udp:127.0.0.1:14551`.
-* Confirm MAVROS uses:
+* Pastikan SITL mengirim ke `udp:127.0.0.1:14551`.
+* Pastikan MAVROS memakai:
   `udp://0.0.0.0:14551@127.0.0.1:14551`.
-* Restart MAVROS after restarting SITL.
+* Restart MAVROS setelah restart SITL.
 
-### Vehicle does not move while PWM changes
+### Vehicle tidak bergerak meskipun PWM berubah
 
-* Ensure vehicle is ARMED.
-* Ensure mode accepts RC override (commonly MANUAL/STEERING during testing).
-* Ensure safety limiter is not forcing STOP (`FAILSAFE_STOP` logs).
+* Pastikan vehicle ARMED.
+* Pastikan mode menerima RC override (umumnya MANUAL untuk pengujian).
+* Pastikan limiter tidak memaksa STOP (log FAILSAFE / stale).
+
+---
+
+# Phase 1 — Standard Maneuver Test (Control Validation)
+
+Tujuan: memvalidasi jalur aktuasi end-to-end dari ROS 2 sampai ArduPilot SITL:
+
+* `/mavros/rc/override` berubah (PWM steer/throttle)
+* vehicle bergerak di Mission Planner
+* tersedia bukti rosbag untuk TA
+
+## Prasyarat
+
+* SITL + Mission Planner + MAVROS sudah berjalan dan `/mavros/state connected: true`.
+* Workspace sudah ter-build dan tersource.
+
+### Build (jika ada perubahan file)
+
+```bash
+cd ~/seano-collision-avoidance/seano_ca_ws
+source /opt/ros/humble/setup.bash
+colcon build --symlink-install
+source install/setup.bash
+```
+
+---
+
+## A) Run — Phase 1 Test (tanpa rekam)
+
+Uji standar 5 siklus + auto shutdown:
+
+```bash
+source /opt/ros/humble/setup.bash
+source ~/seano-collision-avoidance/seano_ca_ws/install/setup.bash
+ros2 launch seano_vision phase1_maneuver_test.launch.py max_cycles:=5 lr_to_steer_gain:=0.6
+```
+
+Expected (indikator benar):
+
+* Stage test berputar: `WARMUP_STOP -> FORWARD -> TURN_LEFT -> TURN_RIGHT -> STOP`.
+* PWM berubah pada `/mavros/rc/override` (tidak statis 1500).
+* Setelah selesai, auto shutdown dan semua proses exit cleanly (tidak spam FAILSAFE).
+
+Verifikasi cepat:
+
+```bash
+ros2 topic echo /mavros/rc/override -n 5
+ros2 topic echo /seano/left_cmd -n 5
+ros2 topic echo /seano/right_cmd -n 5
+```
+
+---
+
+## B) Run — Phase 1 Test + Record (disarankan untuk bukti TA)
+
+Satu perintah untuk menjalankan test + merekam rosbag:
+
+```bash
+source /opt/ros/humble/setup.bash
+source ~/seano-collision-avoidance/seano_ca_ws/install/setup.bash
+ros2 launch seano_vision phase1_maneuver_record.launch.py
+```
+
+Default uji terkontrol pada record:
+
+* `max_cycles:=5`
+* `lr_to_steer_gain:=0.6`
+* `base_throttle:=0.45`
+* `turn_delta:=0.06`
+
+Override contoh:
+
+```bash
+ros2 launch seano_vision phase1_maneuver_record.launch.py lr_to_steer_gain:=0.5
+```
+
+---
+
+## Verifikasi rosbag (setelah record selesai)
+
+Ambil bag terbaru dan tampilkan ringkasan:
+
+```bash
+BAG="$(ls -1dt ~/bags/*phase1_maneuver* | head -n 1)"
+echo "BAG=$BAG"
+ros2 bag info "$BAG"
+```
+
+Expected:
+
+* Ada `Storage id: sqlite3`, `Duration`, `Message Count`.
+* Topic minimal ada dan count > 0:
+
+  * `/mavros/rc/override`
+  * `/mavros/state`
+  * `/seano/left_cmd`, `/seano/right_cmd`
+  * `/seano/manual/*`, `/seano/selected/*`
+
+Opsional (replay bukti):
+
+```bash
+ros2 bag play "$BAG"
+# terminal lain:
+ros2 topic echo /mavros/rc/override -n 5
+```
+
+Jika metadata bag tidak terbaca:
+
+```bash
+ros2 bag reindex "$BAG"
+```
+
+---
