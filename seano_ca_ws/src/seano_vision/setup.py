@@ -83,6 +83,7 @@ setup(
             "thrsteer_to_auto_left_right_node = seano_vision.thrsteer_to_auto_left_right_node:main",
             "auto_controller_stub_node = seano_vision.auto_controller_stub_node:main",
             "test_maneuver_node = seano_vision.test_maneuver_node:main",
+            "mission_mode_manager_node = seano_vision.mission_mode_manager_node:main",
         ],
     },
 )
