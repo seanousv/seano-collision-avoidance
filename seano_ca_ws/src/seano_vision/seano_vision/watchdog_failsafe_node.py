@@ -2,19 +2,18 @@
 """
 watchdog_failsafe_node.py (ROS 2 Humble) - SEANO Vision
 
-FIX utama:
-- Watchdog bisa memantau beberapa topic Image sekaligus (fallback), bukan cuma satu.
-  Jadi kalau kamu pakai /camera/image_raw (bukan _reliable), atau pipeline cuma publish debug_image,
-  watchdog tetap "lihat" image dan tidak false LOST.
+Fix inti:
+1) Default image_topics mencakup /seano/camera/... dan /camera/... (fallback).
+2) Backward-compatible: menerima parameter lama "image_topic" (string) dan otomatis memasukkannya ke image_topics.
+3) QoS image default BEST_EFFORT (aman untuk best_effort maupun reliable publisher).
 
-UPDATE (sesuai request kamu):
-- Default image_timeout_s dinaikkan jadi 4.5 detik (range aman 4–5 detik).
-  Tujuannya biar jitter/lag RTSP WiFi yang kadang drop 2–3 detik tidak langsung bikin LOST -> STOP.
+Output:
+- /ca/failsafe_active (Bool)
+- /ca/failsafe_reason (String)
+- /ca/watchdog_status (String JSON)
+- /ca/command_safe (String)
 
-Parameter penting:
-- image_topics (string array): daftar topic Image yang dianggap valid.
-  Default: ["/camera/image_raw_reliable", "/camera/image_raw", "/ca/debug_image"]
-- image_timeout_s (float): stale threshold image. Default: 4.5
+Catatan: logic lain (risk/mode/vq/freeze) tetap seperti versi Anda.
 """
 
 from __future__ import annotations
@@ -83,10 +82,19 @@ class WatchdogFailsafeNode(Node):
         self.declare_parameter("qos_depth", 1)
         self.declare_parameter("sub_reliability", "best_effort")
 
-        # NEW: multi image topics
+        # Backward compat (launch lama sering pakai ini)
+        self.declare_parameter("image_topic", "")
+
+        # Multi image topics (DEFAULT FIX: include /seano/camera + /camera + debug)
         self.declare_parameter(
             "image_topics",
-            ["/camera/image_raw_reliable", "/camera/image_raw", "/ca/debug_image"],
+            [
+                "/seano/camera/image_raw_reliable",
+                "/seano/camera/image_raw",
+                "/camera/image_raw_reliable",
+                "/camera/image_raw",
+                "/ca/debug_image",
+            ],
         )
 
         # Other inputs
@@ -104,7 +112,6 @@ class WatchdogFailsafeNode(Node):
         self.declare_parameter("status_topic", "/ca/watchdog_status")
 
         # Timeouts
-        # >>> REQUESTED CHANGE: 2.0 -> 4.5 seconds
         self.declare_parameter("image_timeout_s", 4.5)
         self.declare_parameter("risk_timeout_s", 2.0)
         self.declare_parameter("mode_timeout_s", 2.0)
@@ -261,7 +268,8 @@ class WatchdogFailsafeNode(Node):
         self.timer = self.create_timer(1.0 / tick_hz, self._on_tick)
 
         self.get_logger().info(
-            f"watchdog_failsafe_node started: state={self.state}, image_topics={self.image_topics}, "
+            "watchdog_failsafe_node started: "
+            f"state={self.state}, image_topics={self.image_topics}, "
             f"image_timeout_s={float(self.get_parameter('image_timeout_s').value):.2f}"
         )
 
@@ -269,6 +277,7 @@ class WatchdogFailsafeNode(Node):
     # Parameter helpers
     # -------------------------
     def _get_image_topics(self) -> List[str]:
+        # 1) ambil list image_topics
         v = self.get_parameter("image_topics").value
         topics: List[str] = []
         if isinstance(v, (list, tuple)):
@@ -276,13 +285,26 @@ class WatchdogFailsafeNode(Node):
         else:
             s = str(v).strip()
             topics = [s] if s else []
+
+        # 2) backward-compat: image_topic (string) -> prepend
+        single = str(self.get_parameter("image_topic").value).strip()
+        if single:
+            if single not in topics:
+                topics = [single] + topics
+            else:
+                topics = [single] + [t for t in topics if t != single]
+
+        # 3) unique + non-empty
         seen = set()
-        out = []
+        out: List[str] = []
         for t in topics:
-            if t not in seen:
-                out.append(t)
-                seen.add(t)
-        return out if out else ["/camera/image_raw_reliable"]
+            t = str(t).strip()
+            if not t or t in seen:
+                continue
+            out.append(t)
+            seen.add(t)
+
+        return out if out else ["/seano/camera/image_raw_reliable"]
 
     # -------------------------
     # Callbacks
