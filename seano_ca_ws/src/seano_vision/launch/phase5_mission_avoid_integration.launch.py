@@ -16,47 +16,127 @@ from launch_ros.parameter_descriptions import ParameterValue
 from launch_ros.substitutions import FindPackageShare
 
 
+def _bool_by_profile(
+    profile_lc: LaunchConfiguration, enabled_profiles: list[str]
+) -> PythonExpression:
+    profile_list = ", ".join([f"'{p}'" for p in enabled_profiles])
+    return PythonExpression(
+        [
+            "'true' if '",
+            profile_lc,
+            f"' in [{profile_list}] else 'false'",
+        ]
+    )
+
+
+def _str_by_profile(
+    profile_lc: LaunchConfiguration,
+    full_value: str,
+    synthetic_value: str,
+) -> PythonExpression:
+    return PythonExpression(
+        [
+            f"'{full_value}' if '",
+            profile_lc,
+            "' == 'full' else '",
+            synthetic_value,
+            "'",
+        ]
+    )
+
+
 def generate_launch_description():
-    # ---- args ----
+    # ------------------------------------------------------------------
+    # Common args
+    # ------------------------------------------------------------------
     record = LaunchConfiguration("record")
     bag_name = LaunchConfiguration("bag_name")
 
     master_enable_on_start = LaunchConfiguration("master_enable_on_start")
     failsafe_stale_is_active = LaunchConfiguration("failsafe_stale_is_active")
 
-    # CA pipeline
-    ca_camera_launch = LaunchConfiguration("ca_camera_launch")
-    ca_image_topic = LaunchConfiguration("ca_image_topic")
-    ca_det_sub_reliability = LaunchConfiguration("ca_det_sub_reliability")
-    ca_det_pub_reliability = LaunchConfiguration("ca_det_pub_reliability")
-
-    # bridge
     input_mode = LaunchConfiguration("input_mode")
     output_mode = LaunchConfiguration("output_mode")
 
-    # mode manager policy
     avoid_mode = LaunchConfiguration("avoid_mode")
     mission_mode_default = LaunchConfiguration("mission_mode_default")
     failsafe_mode = LaunchConfiguration("failsafe_mode")
 
+    # ------------------------------------------------------------------
+    # Test mode toggles
+    # ------------------------------------------------------------------
+    use_ca_pipeline = LaunchConfiguration("use_ca_pipeline")
+    use_takeover_manager = LaunchConfiguration("use_takeover_manager")
+
+    # ------------------------------------------------------------------
+    # BARU: runtime profile untuk Case C
+    #
+    # synthetic_light    = dummy camera + detector + risk, tanpa watchdog/freeze/vq/fusion
+    # synthetic_watchdog = synthetic_light + watchdog
+    # full               = semua pipeline perception aktif
+    # ------------------------------------------------------------------
+    ca_runtime_profile = LaunchConfiguration("ca_runtime_profile")
+
+    # ------------------------------------------------------------------
+    # CA include args
+    # ------------------------------------------------------------------
+    ca_camera_launch = LaunchConfiguration("ca_camera_launch")
+    ca_image_topic = LaunchConfiguration("ca_image_topic")
+
+    ca_use_camera = LaunchConfiguration("ca_use_camera")
+    ca_use_detector = LaunchConfiguration("ca_use_detector")
+    ca_use_waterline = LaunchConfiguration("ca_use_waterline")
+    ca_use_fp_guard = LaunchConfiguration("ca_use_fp_guard")
+    ca_use_fusion = LaunchConfiguration("ca_use_fusion")
+    ca_use_vq = LaunchConfiguration("ca_use_vq")
+    ca_use_freeze = LaunchConfiguration("ca_use_freeze")
+    ca_use_risk = LaunchConfiguration("ca_use_risk")
+    ca_use_watchdog = LaunchConfiguration("ca_use_watchdog")
+    ca_use_ca_viewer = LaunchConfiguration("ca_use_ca_viewer")
+    ca_use_wl_viewer = LaunchConfiguration("ca_use_wl_viewer")
+
+    ca_det_sub_reliability = LaunchConfiguration("ca_det_sub_reliability")
+    ca_det_pub_reliability = LaunchConfiguration("ca_det_pub_reliability")
+    ca_det_qos_depth = LaunchConfiguration("ca_det_qos_depth")
+
+    wd_startup_grace_s = LaunchConfiguration("wd_startup_grace_s")
+    wd_start_in_failsafe = LaunchConfiguration("wd_start_in_failsafe")
+
     pkg_share = FindPackageShare("seano_vision")
 
-    # ---- include full CA ----
+    # ------------------------------------------------------------------
+    # Include full / light CA pipeline (conditional)
+    # ------------------------------------------------------------------
     ca_include = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             PathJoinSubstitution([pkg_share, "launch", "demo_full_ca.launch.py"])
         ),
+        condition=IfCondition(use_ca_pipeline),
         launch_arguments={
             "camera_launch": ca_camera_launch,
             "image_topic": ca_image_topic,
+            "use_camera": ca_use_camera,
+            "use_detector": ca_use_detector,
+            "use_waterline": ca_use_waterline,
+            "use_fp_guard": ca_use_fp_guard,
+            "use_fusion": ca_use_fusion,
+            "use_vq": ca_use_vq,
+            "use_freeze": ca_use_freeze,
+            "use_risk": ca_use_risk,
+            "use_watchdog": ca_use_watchdog,
+            "use_ca_viewer": ca_use_ca_viewer,
+            "use_wl_viewer": ca_use_wl_viewer,
             "det_sub_reliability": ca_det_sub_reliability,
             "det_pub_reliability": ca_det_pub_reliability,
-            "use_ca_viewer": "false",
-            "use_wl_viewer": "false",
+            "det_qos_depth": ca_det_qos_depth,
+            "wd_startup_grace_s": wd_startup_grace_s,
+            "wd_start_in_failsafe": wd_start_in_failsafe,
         }.items(),
     )
 
-    # ---- mux -> limiter -> bridge ----
+    # ------------------------------------------------------------------
+    # mux -> limiter -> bridge
+    # ------------------------------------------------------------------
     mux = Node(
         package="seano_vision",
         executable="command_mux_node",
@@ -118,7 +198,6 @@ def generate_launch_description():
                 "override_enable_topic": "/seano/rc_override_enable",
                 "override_enabled_default": False,
                 "publish_release_when_disabled": True,
-                # SITL rover-skid default:
                 "rc_steer_chan": 1,
                 "rc_throttle_chan": 3,
                 "pwm_neutral": 1500,
@@ -131,12 +210,15 @@ def generate_launch_description():
         ],
     )
 
-    # ---- takeover manager (reads command_safe) ----
+    # ------------------------------------------------------------------
+    # takeover manager (conditional)
+    # ------------------------------------------------------------------
     takeover = Node(
         package="seano_vision",
         executable="auto_controller_stub_node",
         name="auto_controller_stub_node",
         output="screen",
+        condition=IfCondition(use_takeover_manager),
         parameters=[
             {
                 "command_topic": "/ca/command_safe",
@@ -154,7 +236,9 @@ def generate_launch_description():
         ],
     )
 
-    # ---- mission/mode manager (FASE 5) ----
+    # ------------------------------------------------------------------
+    # mission / mode manager
+    # ------------------------------------------------------------------
     mode_mgr = Node(
         package="seano_vision",
         executable="mission_mode_manager_node",
@@ -174,7 +258,9 @@ def generate_launch_description():
         ],
     )
 
-    # ---- rosbag record (non-image, hemat disk) ----
+    # ------------------------------------------------------------------
+    # rosbag record
+    # ------------------------------------------------------------------
     bag_dir = PathJoinSubstitution([EnvironmentVariable("HOME"), "bags"])
     bag_path = PathJoinSubstitution([bag_dir, bag_name])
 
@@ -207,23 +293,92 @@ def generate_launch_description():
 
     return LaunchDescription(
         [
+            # common
             DeclareLaunchArgument("record", default_value="false"),
             DeclareLaunchArgument("bag_name", default_value="phase5_mission_avoid"),
             DeclareLaunchArgument("master_enable_on_start", default_value="false"),
             DeclareLaunchArgument("failsafe_stale_is_active", default_value="true"),
+            # mode uji utama
+            DeclareLaunchArgument("use_ca_pipeline", default_value="true"),
+            DeclareLaunchArgument("use_takeover_manager", default_value="true"),
+            # BARU: profile runtime perception
             DeclareLaunchArgument(
-                "ca_camera_launch", default_value="phase2_camera_source_test.launch.py"
+                "ca_runtime_profile",
+                default_value="synthetic_light",
+                description="synthetic_light | synthetic_watchdog | full",
+            ),
+            # camera include selection
+            DeclareLaunchArgument(
+                "ca_camera_launch",
+                default_value="phase2_camera_source_test.launch.py",
             ),
             DeclareLaunchArgument(
-                "ca_image_topic", default_value="/seano/camera/image_raw_reliable"
+                "ca_image_topic",
+                default_value="/seano/camera/image_raw_reliable",
             ),
+            # granular toggles
+            # synthetic_light    : camera + detector + risk, watchdog OFF
+            # synthetic_watchdog : camera + detector + risk + watchdog
+            # full               : semua aktif
+            DeclareLaunchArgument(
+                "ca_use_camera",
+                default_value=_bool_by_profile(
+                    ca_runtime_profile, ["synthetic_light", "synthetic_watchdog", "full"]
+                ),
+            ),
+            DeclareLaunchArgument(
+                "ca_use_detector",
+                default_value=_bool_by_profile(
+                    ca_runtime_profile, ["synthetic_light", "synthetic_watchdog", "full"]
+                ),
+            ),
+            DeclareLaunchArgument(
+                "ca_use_waterline",
+                default_value=_bool_by_profile(ca_runtime_profile, ["full"]),
+            ),
+            DeclareLaunchArgument(
+                "ca_use_fp_guard",
+                default_value=_bool_by_profile(ca_runtime_profile, ["full"]),
+            ),
+            DeclareLaunchArgument(
+                "ca_use_fusion",
+                default_value=_bool_by_profile(ca_runtime_profile, ["full"]),
+            ),
+            DeclareLaunchArgument(
+                "ca_use_vq",
+                default_value=_bool_by_profile(ca_runtime_profile, ["full"]),
+            ),
+            DeclareLaunchArgument(
+                "ca_use_freeze",
+                default_value=_bool_by_profile(ca_runtime_profile, ["full"]),
+            ),
+            DeclareLaunchArgument(
+                "ca_use_risk",
+                default_value=_bool_by_profile(
+                    ca_runtime_profile, ["synthetic_light", "synthetic_watchdog", "full"]
+                ),
+            ),
+            DeclareLaunchArgument(
+                "ca_use_watchdog",
+                default_value=_bool_by_profile(ca_runtime_profile, ["synthetic_watchdog", "full"]),
+            ),
+            DeclareLaunchArgument("ca_use_ca_viewer", default_value="false"),
+            DeclareLaunchArgument("ca_use_wl_viewer", default_value="false"),
             DeclareLaunchArgument("ca_det_sub_reliability", default_value="reliable"),
             DeclareLaunchArgument("ca_det_pub_reliability", default_value="reliable"),
+            DeclareLaunchArgument("ca_det_qos_depth", default_value="10"),
+            DeclareLaunchArgument(
+                "wd_startup_grace_s",
+                default_value=_str_by_profile(ca_runtime_profile, "3.0", "8.0"),
+            ),
+            DeclareLaunchArgument("wd_start_in_failsafe", default_value="false"),
+            # bridge / mode policy
             DeclareLaunchArgument("input_mode", default_value="left_right"),
             DeclareLaunchArgument("output_mode", default_value="rc_thr_steer"),
             DeclareLaunchArgument("avoid_mode", default_value="MANUAL"),
             DeclareLaunchArgument("mission_mode_default", default_value="AUTO"),
             DeclareLaunchArgument("failsafe_mode", default_value="MANUAL"),
+            # actions
             ca_include,
             mux,
             limiter,

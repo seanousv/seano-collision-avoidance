@@ -1,17 +1,22 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Mission / Mode Manager (ROS 2 Humble) — SEANO CA (ROBUST)
+Mission / Mode Manager (ROS 2 Humble) — SEANO CA (ROBUST + REJOIN)
 
-Fix utama dari versi sebelumnya:
-- Tidak hanya edge-based. Ada "enforce loop" (periodik) agar kalau restore mode ke-skip,
-  node akan mencoba lagi sampai mode benar (tanpa spam).
-- Menghindari kasus: state=MISSION tetapi autopilot masih MANUAL.
+Tambahan utama dari versi sebelumnya:
+- Menambahkan state REJOIN agar alur formal menjadi:
+  FAILSAFE -> AVOID -> REJOIN -> MISSION
+- Setelah takeover OFF, node tidak langsung menganggap MISSION selesai pulih.
+  Node masuk ke REJOIN dulu, meminta mode mission target (default AUTO),
+  lalu menunggu mode stabil selama beberapa saat sebelum publish MISSION.
+- Menambahkan event:
+  REJOIN_START, REJOIN_DONE, REJOIN_TIMEOUT, REJOIN_CANCELLED
 
-State machine (FASE 5 mind map):
-- FAILSAFE  : /ca/failsafe_active true  -> target failsafe_mode (default MANUAL)
-- AVOID     : /seano/rc_override_enable true -> target avoid_mode (default MANUAL)
-- MISSION   : default -> target mission_mode_default (default AUTO)
+State machine (FASE 5/6 mind map):
+- FAILSAFE : /ca/failsafe_active true              -> target failsafe_mode (default MANUAL)
+- AVOID    : /seano/rc_override_enable true        -> target avoid_mode (default MANUAL)
+- REJOIN   : takeover OFF setelah AVOID/FAILSAFE   -> target mission restore mode (default AUTO)
+- MISSION  : default setelah REJOIN selesai        -> target mission restore mode (default AUTO)
 
 Input:
 - /mavros/state (mavros_msgs/State)
@@ -19,7 +24,7 @@ Input:
 - /ca/failsafe_active (std_msgs/Bool)
 
 Output:
-- /ca/mode_manager_state (String): MISSION/AVOID/FAILSAFE
+- /ca/mode_manager_state (String): MISSION/AVOID/REJOIN/FAILSAFE
 - /ca/mode_manager_event (String): JSON event log
 
 Action:
@@ -63,21 +68,22 @@ class _MgrState:
     last_override: Optional[bool] = None
     last_failsafe: Optional[bool] = None
 
-    # last known mavros mode
     mavros_connected: bool = False
     mavros_mode: str = "UNKNOWN"
 
-    # pending mode request tracking
     pending_mode: Optional[str] = None
     pending_since: float = 0.0
 
-    # rate limit / enforcement
     last_mode_req_t: float = 0.0
     last_enforce_t: float = 0.0
 
-    # restore targets captured at edge
     restore_mode_after_avoid: Optional[str] = None
     restore_mode_after_failsafe: Optional[str] = None
+
+    rejoin_active: bool = False
+    rejoin_since: float = 0.0
+    rejoin_target_mode: Optional[str] = None
+    rejoin_mode_match_since: float = 0.0
 
 
 class MissionModeManager(Node):
@@ -100,12 +106,17 @@ class MissionModeManager(Node):
         self.declare_parameter("restore_mode_on_release", True)
         self.declare_parameter("switch_to_failsafe_on_failsafe", True)
         self.declare_parameter("restore_after_failsafe_if_clear", True)
+        self.declare_parameter("enable_rejoin_state", True)
 
         # Robustness
         self.declare_parameter("enforce_mode", True)
-        self.declare_parameter("enforce_period_s", 1.5)  # coba set_mode ulang tiap ini
-        self.declare_parameter("min_mode_switch_interval_s", 0.8)  # anti-spam
-        self.declare_parameter("pending_timeout_s", 3.0)  # kalau pending terlalu lama, boleh retry
+        self.declare_parameter("enforce_period_s", 1.5)
+        self.declare_parameter("min_mode_switch_interval_s", 0.8)
+        self.declare_parameter("pending_timeout_s", 3.0)
+
+        # Rejoin policy
+        self.declare_parameter("rejoin_stable_time_s", 2.0)
+        self.declare_parameter("rejoin_timeout_s", 12.0)
 
         # Outputs
         self.declare_parameter("state_out_topic", "/ca/mode_manager_state")
@@ -116,7 +127,6 @@ class MissionModeManager(Node):
 
         self.st = _MgrState()
 
-        # -------- ROS IO --------
         self.pub_state = self.create_publisher(
             String, str(self.get_parameter("state_out_topic").value), _qos(10)
         )
@@ -148,7 +158,7 @@ class MissionModeManager(Node):
         )
 
         hz = float(self.get_parameter("tick_hz").value)
-        if hz <= 0:
+        if hz <= 0.0:
             hz = 5.0
         self.create_timer(1.0 / hz, self._tick)
 
@@ -158,6 +168,9 @@ class MissionModeManager(Node):
                 "avoid_mode": str(self.get_parameter("avoid_mode").value),
                 "mission_mode_default": str(self.get_parameter("mission_mode_default").value),
                 "failsafe_mode": str(self.get_parameter("failsafe_mode").value),
+                "enable_rejoin_state": bool(self.get_parameter("enable_rejoin_state").value),
+                "rejoin_stable_time_s": float(self.get_parameter("rejoin_stable_time_s").value),
+                "rejoin_timeout_s": float(self.get_parameter("rejoin_timeout_s").value),
             },
         )
 
@@ -176,13 +189,13 @@ class MissionModeManager(Node):
 
         # rising: takeover ON
         if (not prev) and cur:
-            # simpan mode sebelum avoid untuk restore nanti
             self.st.restore_mode_after_avoid = self._current_mission_restore_target()
+            self._cancel_rejoin("takeover_on")
             self._emit_event(
                 "TAKEOVER_ON",
                 {
                     "restore_mode": self.st.restore_mode_after_avoid,
-                    "avoid_mode": self.get_parameter("avoid_mode").value,
+                    "avoid_mode": str(self.get_parameter("avoid_mode").value),
                 },
             )
             if bool(self.get_parameter("switch_to_avoid_on_takeover").value):
@@ -194,8 +207,12 @@ class MissionModeManager(Node):
                 self.get_parameter("mission_mode_default").value
             )
             self._emit_event("TAKEOVER_OFF", {"restore_mode": restore})
-            if bool(self.get_parameter("restore_mode_on_release").value):
+
+            if bool(self.get_parameter("enable_rejoin_state").value):
+                self._start_rejoin(restore, reason="takeover_off")
+            elif bool(self.get_parameter("restore_mode_on_release").value):
                 self._request_mode(restore, cause="takeover_off_restore")
+
             self.st.restore_mode_after_avoid = None
 
     def _cb_failsafe(self, msg: Bool) -> None:
@@ -209,11 +226,12 @@ class MissionModeManager(Node):
         # rising: failsafe ON
         if (not prev) and cur:
             self.st.restore_mode_after_failsafe = self._current_mission_restore_target()
+            self._cancel_rejoin("failsafe_on")
             self._emit_event(
                 "FAILSAFE_ON",
                 {
                     "restore_mode": self.st.restore_mode_after_failsafe,
-                    "failsafe_mode": self.get_parameter("failsafe_mode").value,
+                    "failsafe_mode": str(self.get_parameter("failsafe_mode").value),
                 },
             )
             if bool(self.get_parameter("switch_to_failsafe_on_failsafe").value):
@@ -224,38 +242,38 @@ class MissionModeManager(Node):
         # falling: failsafe OFF
         if prev and (not cur):
             self._emit_event("FAILSAFE_OFF", {})
+
             if bool(self.get_parameter("restore_after_failsafe_if_clear").value):
-                # kalau takeover masih ON, jangan restore mission dulu
                 if bool(self.st.last_override):
                     self._emit_event("RESTORE_SKIP", {"reason": "takeover_still_on"})
                 else:
                     restore = self.st.restore_mode_after_failsafe or str(
                         self.get_parameter("mission_mode_default").value
                     )
-                    self._request_mode(restore, cause="failsafe_off_restore")
+                    if bool(self.get_parameter("enable_rejoin_state").value):
+                        self._start_rejoin(restore, reason="failsafe_off")
+                    else:
+                        self._request_mode(restore, cause="failsafe_off_restore")
+
             self.st.restore_mode_after_failsafe = None
 
     # -------- Core tick / enforcement --------
     def _tick(self) -> None:
-        override_on = bool(self.st.last_override) if (self.st.last_override is not None) else False
-        failsafe_on = bool(self.st.last_failsafe) if (self.st.last_failsafe is not None) else False
+        override_on = bool(self.st.last_override) if self.st.last_override is not None else False
+        failsafe_on = bool(self.st.last_failsafe) if self.st.last_failsafe is not None else False
 
-        # publish high-level state
-        if failsafe_on:
-            mgr_state = "FAILSAFE"
-        elif override_on:
-            mgr_state = "AVOID"
-        else:
-            mgr_state = "MISSION"
+        mgr_state = self._compute_mgr_state(override_on=override_on, failsafe_on=failsafe_on)
         self.pub_state.publish(String(data=mgr_state))
 
-        # enforcement (robust)
+        if mgr_state == "REJOIN":
+            self._tick_rejoin()
+
         if not bool(self.get_parameter("enforce_mode").value):
             return
 
         now = _now_s()
         enforce_period = float(self.get_parameter("enforce_period_s").value)
-        if enforce_period <= 0:
+        if enforce_period <= 0.0:
             enforce_period = 1.5
 
         if (now - self.st.last_enforce_t) < enforce_period:
@@ -265,33 +283,116 @@ class MissionModeManager(Node):
         target = self._desired_mode(mgr_state)
         cur_mode = _norm_mode(self.st.mavros_mode)
 
-        # pending timeout handling
         pending_timeout = float(self.get_parameter("pending_timeout_s").value)
-        if self.st.pending_mode is not None and pending_timeout > 0:
+        if self.st.pending_mode is not None and pending_timeout > 0.0:
             if (now - self.st.pending_since) > pending_timeout:
                 self._emit_event("PENDING_TIMEOUT", {"pending_mode": self.st.pending_mode})
-                self.st.pending_mode = None  # allow retry
+                self.st.pending_mode = None
 
-        # if already match, nothing
         if cur_mode == _norm_mode(target):
             return
 
-        # enforce by retrying set_mode
-        self._emit_event("ENFORCE", {"mgr_state": mgr_state, "target": target, "current": cur_mode})
+        self._emit_event(
+            "ENFORCE",
+            {"mgr_state": mgr_state, "target": target, "current": cur_mode},
+        )
         self._request_mode(target, cause=f"enforce_{mgr_state.lower()}")
+
+    def _compute_mgr_state(self, override_on: bool, failsafe_on: bool) -> str:
+        if failsafe_on:
+            return "FAILSAFE"
+        if override_on:
+            return "AVOID"
+        if bool(self.get_parameter("enable_rejoin_state").value) and self.st.rejoin_active:
+            return "REJOIN"
+        return "MISSION"
+
+    def _tick_rejoin(self) -> None:
+        target = _norm_mode(self.st.rejoin_target_mode or self._current_mission_restore_target())
+        cur = _norm_mode(self.st.mavros_mode)
+        now = _now_s()
+
+        stable_required = max(0.0, float(self.get_parameter("rejoin_stable_time_s").value))
+        timeout_s = max(0.0, float(self.get_parameter("rejoin_timeout_s").value))
+
+        if cur == target and target:
+            if self.st.rejoin_mode_match_since <= 0.0:
+                self.st.rejoin_mode_match_since = now
+                self._emit_event(
+                    "REJOIN_MODE_MATCH",
+                    {"target_mode": target, "stable_required_s": stable_required},
+                )
+            elif (now - self.st.rejoin_mode_match_since) >= stable_required:
+                elapsed = max(0.0, now - self.st.rejoin_since)
+                self._emit_event(
+                    "REJOIN_DONE",
+                    {"target_mode": target, "elapsed_s": round(elapsed, 3)},
+                )
+                self._clear_rejoin()
+        else:
+            if self.st.rejoin_mode_match_since > 0.0:
+                self._emit_event(
+                    "REJOIN_MODE_UNSTABLE",
+                    {"target_mode": target, "current_mode": cur},
+                )
+            self.st.rejoin_mode_match_since = 0.0
+
+        if self.st.rejoin_active and timeout_s > 0.0:
+            elapsed = now - self.st.rejoin_since
+            if elapsed >= timeout_s:
+                self._emit_event(
+                    "REJOIN_TIMEOUT",
+                    {
+                        "target_mode": target,
+                        "current_mode": cur,
+                        "elapsed_s": round(elapsed, 3),
+                    },
+                )
+                self._clear_rejoin()
+
+    def _start_rejoin(self, restore_mode: str, reason: str) -> None:
+        target = _norm_mode(restore_mode) or _norm_mode(
+            str(self.get_parameter("mission_mode_default").value)
+        )
+        now = _now_s()
+
+        self.st.rejoin_active = True
+        self.st.rejoin_since = now
+        self.st.rejoin_target_mode = target
+        self.st.rejoin_mode_match_since = 0.0
+
+        self._emit_event("REJOIN_START", {"target_mode": target, "reason": reason})
+
+        if reason == "takeover_off":
+            if bool(self.get_parameter("restore_mode_on_release").value):
+                self._request_mode(target, cause="rejoin_start_restore")
+        elif reason == "failsafe_off":
+            if bool(self.get_parameter("restore_after_failsafe_if_clear").value):
+                self._request_mode(target, cause="rejoin_start_restore")
+
+    def _clear_rejoin(self) -> None:
+        self.st.rejoin_active = False
+        self.st.rejoin_since = 0.0
+        self.st.rejoin_target_mode = None
+        self.st.rejoin_mode_match_since = 0.0
+
+    def _cancel_rejoin(self, reason: str) -> None:
+        if not self.st.rejoin_active:
+            return
+        elapsed = max(0.0, _now_s() - self.st.rejoin_since)
+        self._emit_event("REJOIN_CANCELLED", {"reason": reason, "elapsed_s": round(elapsed, 3)})
+        self._clear_rejoin()
 
     def _desired_mode(self, mgr_state: str) -> str:
         if mgr_state == "FAILSAFE":
             return str(self.get_parameter("failsafe_mode").value)
         if mgr_state == "AVOID":
             return str(self.get_parameter("avoid_mode").value)
-        # MISSION
-        # Prefer last saved restore target if available; else default
+        if mgr_state == "REJOIN":
+            return str(self.st.rejoin_target_mode or self._current_mission_restore_target())
         return self._current_mission_restore_target()
 
     def _current_mission_restore_target(self) -> str:
-        # kalau mode sekarang sudah AUTO/GUIDED/MISSION type lain, kita simpan itu sebagai restore.
-        # kalau mode sekarang MANUAL dan kita butuh restore mission, pakai mission_mode_default.
         cur = _norm_mode(self.st.mavros_mode)
         mission_default = str(self.get_parameter("mission_mode_default").value)
 
@@ -304,14 +405,13 @@ class MissionModeManager(Node):
         if not mode:
             return
 
-        # connected check
         if not self.st.mavros_connected:
             self._emit_event(
-                "MODE_REQ_SKIPPED", {"mode": mode, "cause": cause, "reason": "mavros_not_connected"}
+                "MODE_REQ_SKIPPED",
+                {"mode": mode, "cause": cause, "reason": "mavros_not_connected"},
             )
             return
 
-        # service ready?
         if not self.cli_set_mode.service_is_ready():
             self._emit_event(
                 "MODE_REQ_SKIPPED",
@@ -319,23 +419,22 @@ class MissionModeManager(Node):
             )
             return
 
-        # rate limit (anti spam)
         min_dt = float(self.get_parameter("min_mode_switch_interval_s").value)
         now = _now_s()
         if (now - self.st.last_mode_req_t) < max(0.0, min_dt):
             self._emit_event(
-                "MODE_REQ_SKIPPED", {"mode": mode, "cause": cause, "reason": "rate_limited"}
+                "MODE_REQ_SKIPPED",
+                {"mode": mode, "cause": cause, "reason": "rate_limited"},
             )
             return
 
-        # avoid duplicate pending
         if self.st.pending_mode is not None:
             self._emit_event(
-                "MODE_REQ_SKIPPED", {"mode": mode, "cause": cause, "reason": "pending_exists"}
+                "MODE_REQ_SKIPPED",
+                {"mode": mode, "cause": cause, "reason": "pending_exists"},
             )
             return
 
-        # already in mode
         if _norm_mode(self.st.mavros_mode) == mode:
             self._emit_event("MODE_ALREADY", {"mode": mode, "cause": cause})
             return
@@ -351,16 +450,16 @@ class MissionModeManager(Node):
 
         fut = self.cli_set_mode.call_async(req)
 
-        def _done_cb(f) -> None:
+        def _done_cb(fut_obj) -> None:
             ok = False
             detail = ""
             try:
-                resp = f.result()
+                resp = fut_obj.result()
                 ok = bool(resp.mode_sent)
                 detail = "mode_sent=true" if ok else "mode_sent=false"
-            except Exception as e:
+            except Exception as exc:
                 ok = False
-                detail = f"exception:{type(e).__name__}"
+                detail = f"exception:{type(exc).__name__}"
             self._emit_event("MODE_REQ_DONE", {"mode": mode, "ok": ok, "detail": detail})
             self.st.pending_mode = None
 

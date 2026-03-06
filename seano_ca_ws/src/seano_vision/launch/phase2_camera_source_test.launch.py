@@ -16,11 +16,194 @@ from launch.actions import (
 from launch.events import Shutdown
 from launch.substitutions import EnvironmentVariable, LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
-from launch_ros.parameter_descriptions import ParameterValue
 
-TOPICS_PHASE2_MIN = [
-    "/seano/camera/image_raw",
-]
+
+def _profile_defaults(profile: str) -> dict:
+    profile = str(profile or "").strip().lower()
+
+    dummy_light_pipeline = (
+        "videotestsrc is-live=true pattern=smpte ! "
+        "video/x-raw,framerate=10/1,width=320,height=240 ! "
+        "videoconvert ! appsink drop=true max-buffers=1 sync=false"
+    )
+
+    dummy_full_pipeline = (
+        "videotestsrc is-live=true pattern=smpte ! "
+        "video/x-raw,framerate=30/1,width=640,height=480 ! "
+        "videoconvert ! appsink drop=true max-buffers=1 sync=false"
+    )
+
+    if profile == "dummy_full":
+        return {
+            "source": "pipeline",
+            "backend": "gstreamer",
+            "url": "",
+            "pipeline": dummy_full_pipeline,
+            "device_path": "/dev/video0",
+            "device_index": "0",
+            "device_fourcc": "MJPG",
+            "device_width": "640",
+            "device_height": "480",
+            "device_fps": "30",
+            "frame_id": "camera_dummy",
+            "max_fps": "15.0",
+            "max_age_ms": "120",
+        }
+
+    if profile == "usb":
+        return {
+            "source": "device",
+            "backend": "opencv",
+            "url": "",
+            "pipeline": "",
+            "device_path": "/dev/video0",
+            "device_index": "0",
+            "device_fourcc": "MJPG",
+            "device_width": "1280",
+            "device_height": "720",
+            "device_fps": "30",
+            "frame_id": "camera_usb",
+            "max_fps": "15.0",
+            "max_age_ms": "120",
+        }
+
+    if profile == "rtsp":
+        return {
+            "source": "url",
+            "backend": "gstreamer",
+            "url": "rtsp://127.0.0.1:8554/stream",
+            "pipeline": "",
+            "device_path": "/dev/video0",
+            "device_index": "0",
+            "device_fourcc": "MJPG",
+            "device_width": "1280",
+            "device_height": "720",
+            "device_fps": "30",
+            "frame_id": "camera_rtsp",
+            "max_fps": "15.0",
+            "max_age_ms": "120",
+        }
+
+    if profile == "custom":
+        return {
+            "source": "",
+            "backend": "",
+            "url": "",
+            "pipeline": "",
+            "device_path": "/dev/video0",
+            "device_index": "0",
+            "device_fourcc": "MJPG",
+            "device_width": "1280",
+            "device_height": "720",
+            "device_fps": "30",
+            "frame_id": "camera",
+            "max_fps": "15.0",
+            "max_age_ms": "120",
+        }
+
+    # default = dummy_light
+    return {
+        "source": "pipeline",
+        "backend": "gstreamer",
+        "url": "",
+        "pipeline": dummy_light_pipeline,
+        "device_path": "/dev/video0",
+        "device_index": "0",
+        "device_fourcc": "MJPG",
+        "device_width": "320",
+        "device_height": "240",
+        "device_fps": "10",
+        "frame_id": "camera_dummy",
+        "max_fps": "10.0",
+        "max_age_ms": "200",
+    }
+
+
+def _pick(context, key: str, defaults: dict) -> str:
+    value = context.perform_substitution(LaunchConfiguration(key)).strip()
+    if value != "":
+        return value
+    return str(defaults[key])
+
+
+def _to_int(value: str, fallback: int) -> int:
+    try:
+        return int(str(value).strip())
+    except Exception:
+        return int(fallback)
+
+
+def _to_float(value: str, fallback: float) -> float:
+    try:
+        return float(str(value).strip())
+    except Exception:
+        return float(fallback)
+
+
+def _build_camera_node(context, *args, **kwargs):
+    profile = context.perform_substitution(LaunchConfiguration("profile")).strip().lower()
+    defaults = _profile_defaults(profile)
+
+    source = _pick(context, "source", defaults)
+    backend = _pick(context, "backend", defaults)
+    url = _pick(context, "url", defaults)
+    pipeline = _pick(context, "pipeline", defaults)
+    device_path = _pick(context, "device_path", defaults)
+    device_index = _to_int(_pick(context, "device_index", defaults), 0)
+    device_fourcc = _pick(context, "device_fourcc", defaults)
+    device_width = _to_int(_pick(context, "device_width", defaults), 640)
+    device_height = _to_int(_pick(context, "device_height", defaults), 480)
+    device_fps = _to_int(_pick(context, "device_fps", defaults), 30)
+    frame_id = _pick(context, "frame_id", defaults)
+    max_fps = _to_float(_pick(context, "max_fps", defaults), 15.0)
+    max_age_ms = _to_int(_pick(context, "max_age_ms", defaults), 120)
+
+    topic_best_effort = context.perform_substitution(
+        LaunchConfiguration("topic_best_effort")
+    ).strip()
+    topic_reliable = context.perform_substitution(LaunchConfiguration("topic_reliable")).strip()
+
+    node = Node(
+        package="seano_vision",
+        executable="camera_node",
+        name="camera_source",
+        output="screen",
+        parameters=[
+            {
+                "source": source,  # pipeline | url | device
+                "backend": backend,  # gstreamer | opencv
+                "url": url,
+                "pipeline": pipeline,
+                "device_path": device_path,
+                "device_index": device_index,
+                "device_fourcc": device_fourcc,
+                "device_width": device_width,
+                "device_height": device_height,
+                "device_fps": device_fps,
+                "topic_best_effort": topic_best_effort,
+                "topic_reliable": topic_reliable,
+                "frame_id": frame_id,
+                "max_fps": max_fps,
+                "max_age_ms": max_age_ms,
+            }
+        ],
+    )
+
+    return [
+        LogInfo(
+            msg=(
+                "[phase2_camera_source_test] profile="
+                + profile
+                + " source="
+                + source
+                + " backend="
+                + backend
+                + " topic="
+                + topic_reliable
+            )
+        ),
+        node,
+    ]
 
 
 def _maybe_record(context, *args, **kwargs):
@@ -68,92 +251,50 @@ def _maybe_autostop(context, *args, **kwargs):
 
 
 def generate_launch_description():
-    # Default pipeline that works even when /dev/video0 doesn't exist (WSL-safe)
-    default_pipeline = (
-        "videotestsrc is-live=true pattern=smpte ! "
-        "video/x-raw,framerate=30/1,width=640,height=480 ! "
-        "videoconvert ! appsink drop=true max-buffers=1 sync=false"
-    )
-
     default_bag_dir = PathJoinSubstitution([EnvironmentVariable("HOME"), "bags"])
-
-    camera_node = Node(
-        package="seano_vision",
-        executable="camera_node",
-        name="camera_source",
-        output="screen",
-        parameters=[
-            {
-                "source": LaunchConfiguration("source"),  # pipeline | url | device
-                "backend": LaunchConfiguration("backend"),  # gstreamer | opencv
-                "url": LaunchConfiguration("url"),  # rtsp://... (if source=url)
-                "pipeline": LaunchConfiguration(
-                    "pipeline"
-                ),  # gstreamer pipeline (if source=pipeline)
-                "device_path": LaunchConfiguration("device_path"),  # /dev/video0 (if source=device)
-                "device_index": ParameterValue(LaunchConfiguration("device_index"), value_type=int),
-                "device_fourcc": LaunchConfiguration("device_fourcc"),
-                "device_width": ParameterValue(LaunchConfiguration("device_width"), value_type=int),
-                "device_height": ParameterValue(
-                    LaunchConfiguration("device_height"), value_type=int
-                ),
-                "device_fps": ParameterValue(LaunchConfiguration("device_fps"), value_type=int),
-                "topic_best_effort": LaunchConfiguration("topic_best_effort"),
-                "topic_reliable": LaunchConfiguration("topic_reliable"),
-                "frame_id": LaunchConfiguration("frame_id"),
-                "max_fps": ParameterValue(LaunchConfiguration("max_fps"), value_type=float),
-                "max_age_ms": ParameterValue(LaunchConfiguration("max_age_ms"), value_type=int),
-            }
-        ],
-    )
 
     return LaunchDescription(
         [
-            # source selection
             DeclareLaunchArgument(
-                "source", default_value="pipeline", description="pipeline | url | device"
+                "profile",
+                default_value="dummy_light",
+                description="dummy_light | dummy_full | usb | rtsp | custom",
             ),
             DeclareLaunchArgument(
-                "backend", default_value="gstreamer", description="gstreamer | opencv"
+                "source", default_value="", description="pipeline | url | device"
             ),
+            DeclareLaunchArgument("backend", default_value="", description="gstreamer | opencv"),
             DeclareLaunchArgument(
                 "url", default_value="", description="RTSP/HTTP URL (if source=url)"
             ),
             DeclareLaunchArgument(
-                "pipeline", default_value=default_pipeline, description="GStreamer appsink pipeline"
+                "pipeline", default_value="", description="GStreamer appsink pipeline"
             ),
+            DeclareLaunchArgument("device_path", default_value="", description="V4L2 device path"),
             DeclareLaunchArgument(
-                "device_path", default_value="/dev/video0", description="V4L2 device path"
+                "device_index", default_value="", description="Device index (legacy)"
             ),
-            DeclareLaunchArgument(
-                "device_index", default_value="0", description="Device index (legacy)"
-            ),
-            # device tuning (if source=device)
-            DeclareLaunchArgument("device_fourcc", default_value="MJPG"),
-            DeclareLaunchArgument("device_width", default_value="1280"),
-            DeclareLaunchArgument("device_height", default_value="720"),
-            DeclareLaunchArgument("device_fps", default_value="30"),
-            # output topics
+            DeclareLaunchArgument("device_fourcc", default_value=""),
+            DeclareLaunchArgument("device_width", default_value=""),
+            DeclareLaunchArgument("device_height", default_value=""),
+            DeclareLaunchArgument("device_fps", default_value=""),
             DeclareLaunchArgument("topic_best_effort", default_value="/seano/camera/image_raw"),
             DeclareLaunchArgument(
-                "topic_reliable", default_value="/seano/camera/image_raw_reliable"
+                "topic_reliable",
+                default_value="/seano/camera/image_raw_reliable",
             ),
-            DeclareLaunchArgument("frame_id", default_value="camera"),
-            # publish behavior
-            DeclareLaunchArgument("max_fps", default_value="15.0"),
-            DeclareLaunchArgument("max_age_ms", default_value="120"),
-            # record (optional)
+            DeclareLaunchArgument("frame_id", default_value=""),
+            DeclareLaunchArgument("max_fps", default_value=""),
+            DeclareLaunchArgument("max_age_ms", default_value=""),
             DeclareLaunchArgument("record", default_value="false"),
             DeclareLaunchArgument("bag_base_dir", default_value=default_bag_dir),
             DeclareLaunchArgument("bag_prefix", default_value="phase2_camera"),
-            # auto stop (optional)
             DeclareLaunchArgument(
                 "duration_s",
                 default_value="0",
                 description="Auto stop after N seconds (0=disabled)",
             ),
-            camera_node,
-            # start record slightly after node start
+            OpaqueFunction(function=_build_camera_node),
             TimerAction(period=0.5, actions=[OpaqueFunction(function=_maybe_record)]),
             OpaqueFunction(function=_maybe_autostop),
         ]
