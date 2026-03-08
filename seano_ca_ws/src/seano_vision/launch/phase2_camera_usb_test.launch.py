@@ -1,47 +1,91 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
 import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
+from launch.actions import DeclareLaunchArgument
+from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 
 
 def generate_launch_description():
     pkg_share = get_package_share_directory("seano_vision")
     cfg = os.path.join(pkg_share, "config", "camera_usb.yaml")
 
-    # OVERRIDE supaya hasilnya PASTI:
-    # - hanya publish 1 topic (best-effort) => /camera/image_raw harus bisa ~15 Hz
-    # - publish_in_reader False => shutdown aman, tidak publish saat context sudah mati
-    # - kunci beban rendah (MJPG 640x480)
+    device_index = LaunchConfiguration("device_index")
+    device_path = LaunchConfiguration("device_path")
+    device_fourcc = LaunchConfiguration("device_fourcc")
+    device_width = LaunchConfiguration("device_width")
+    device_height = LaunchConfiguration("device_height")
+    device_fps = LaunchConfiguration("device_fps")
+
+    max_fps = LaunchConfiguration("max_fps")
+    max_age_ms = LaunchConfiguration("max_age_ms")
+    reconnect_sec = LaunchConfiguration("reconnect_sec")
+    log_stats_sec = LaunchConfiguration("log_stats_sec")
+
+    topic_best_effort = LaunchConfiguration("topic_best_effort")
+    topic_reliable = LaunchConfiguration("topic_reliable")
+
     overrides = {
+        # Source
         "source": "device",
         "backend": "opencv",
-        "device_index": 0,
-        "device_path": "/dev/video0",
-        "device_fourcc": "MJPG",
-        "device_width": 640,
-        "device_height": 480,
-        "device_fps": 30,
-        # Target publish
-        "max_fps": 15.0,
-        "max_age_ms": 120,
+        # KUNCI FIX 1:
+        # jangan paksa /dev/video0 sebagai URI/path default.
+        # Biarkan node membuka kamera via device_index=0.
+        "device_index": ParameterValue(device_index, value_type=int),
+        "device_path": device_path,
+        # Format device
+        "device_fourcc": device_fourcc,
+        "device_width": ParameterValue(device_width, value_type=int),
+        "device_height": ParameterValue(device_height, value_type=int),
+        "device_fps": ParameterValue(device_fps, value_type=int),
+        # Publish throttling
+        "max_fps": ParameterValue(max_fps, value_type=float),
+        "max_age_ms": ParameterValue(max_age_ms, value_type=int),
         "grab_skip": 0,
-        # Hindari error shutdown + kurangi beban
+        # Stabilitas runtime
         "publish_in_reader": False,
         "output_encoding": "bgr8",
         "swap_rb": False,
-        # KUNCI: hanya satu output topic dulu
+        "reconnect_sec": ParameterValue(reconnect_sec, value_type=float),
+        "log_stats_sec": ParameterValue(log_stats_sec, value_type=float),
+        # KUNCI FIX 2:
+        # publish kedua jalur supaya kompatibel dengan hardware phase7.
         "publish_best_effort": True,
-        "publish_reliable": False,
-        "topic_best_effort": "/camera/image_raw",
-        "topic_reliable": "/camera/image_raw_reliable",
-        "reconnect_sec": 0.5,
-        "log_stats_sec": 2.0,
+        "publish_reliable": True,
+        "topic_best_effort": topic_best_effort,
+        "topic_reliable": topic_reliable,
     }
 
     return LaunchDescription(
         [
+            DeclareLaunchArgument("device_index", default_value="0"),
+            DeclareLaunchArgument(
+                "device_path",
+                default_value="",
+                description="Kosongkan default supaya camera open via device_index, bukan URI /dev/video0.",
+            ),
+            DeclareLaunchArgument("device_fourcc", default_value="MJPG"),
+            DeclareLaunchArgument("device_width", default_value="640"),
+            DeclareLaunchArgument("device_height", default_value="480"),
+            DeclareLaunchArgument("device_fps", default_value="30"),
+            DeclareLaunchArgument("max_fps", default_value="15.0"),
+            DeclareLaunchArgument("max_age_ms", default_value="120"),
+            DeclareLaunchArgument("reconnect_sec", default_value="0.5"),
+            DeclareLaunchArgument("log_stats_sec", default_value="2.0"),
+            DeclareLaunchArgument(
+                "topic_best_effort",
+                default_value="/seano/camera/image_raw",
+            ),
+            DeclareLaunchArgument(
+                "topic_reliable",
+                default_value="/seano/camera/image_raw_reliable",
+            ),
             Node(
                 package="seano_vision",
                 executable="camera_node",
@@ -49,6 +93,6 @@ def generate_launch_description():
                 output="screen",
                 emulate_tty=True,
                 parameters=[cfg, overrides],
-            )
+            ),
         ]
     )

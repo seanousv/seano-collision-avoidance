@@ -4,7 +4,10 @@
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, ExecuteProcess, IncludeLaunchDescription
 from launch.conditions import IfCondition
-from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch.launch_description_sources import (
+    AnyLaunchDescriptionSource,
+    PythonLaunchDescriptionSource,
+)
 from launch.substitutions import (
     EnvironmentVariable,
     LaunchConfiguration,
@@ -47,6 +50,7 @@ def _str_by_profile(
 
 def generate_launch_description():
     pkg_share = FindPackageShare("seano_vision")
+    mavros_share = FindPackageShare("mavros")
 
     # ------------------------------------------------------------------
     # Common args
@@ -76,9 +80,21 @@ def generate_launch_description():
     # ------------------------------------------------------------------
     # Main toggles
     # ------------------------------------------------------------------
+    use_mavros = LaunchConfiguration("use_mavros")
     use_ca_pipeline = LaunchConfiguration("use_ca_pipeline")
     use_takeover_manager = LaunchConfiguration("use_takeover_manager")
     use_mode_manager = LaunchConfiguration("use_mode_manager")
+
+    # ------------------------------------------------------------------
+    # MAVROS hardware link
+    # ------------------------------------------------------------------
+    mavros_namespace = LaunchConfiguration("mavros_namespace")
+    fcu_url = LaunchConfiguration("fcu_url")
+    gcs_url = LaunchConfiguration("gcs_url")
+    tgt_system = LaunchConfiguration("tgt_system")
+    tgt_component = LaunchConfiguration("tgt_component")
+    fcu_protocol = LaunchConfiguration("fcu_protocol")
+    respawn_mavros = LaunchConfiguration("respawn_mavros")
 
     # ------------------------------------------------------------------
     # Camera / CA include args
@@ -141,6 +157,23 @@ def generate_launch_description():
     cruise_speed = LaunchConfiguration("cruise_speed")
     turn_cmd = LaunchConfiguration("turn_cmd")
     diff_mix_gain = LaunchConfiguration("diff_mix_gain")
+
+    # ------------------------------------------------------------------
+    # MAVROS include (hardware serial / telemetry link)
+    # ------------------------------------------------------------------
+    mavros_include = IncludeLaunchDescription(
+        AnyLaunchDescriptionSource(PathJoinSubstitution([mavros_share, "launch", "apm.launch"])),
+        condition=IfCondition(use_mavros),
+        launch_arguments={
+            "fcu_url": fcu_url,
+            "gcs_url": gcs_url,
+            "tgt_system": tgt_system,
+            "tgt_component": tgt_component,
+            "fcu_protocol": fcu_protocol,
+            "respawn_mavros": respawn_mavros,
+            "namespace": mavros_namespace,
+        }.items(),
+    )
 
     # ------------------------------------------------------------------
     # CA include
@@ -236,13 +269,10 @@ def generate_launch_description():
                 "override_enable_topic": "/seano/rc_override_enable",
                 "override_enabled_default": False,
                 "publish_release_when_disabled": True,
-                # channel mapping untuk hardware final
                 "rc_left_chan": ParameterValue(rc_left_chan, value_type=int),
                 "rc_right_chan": ParameterValue(rc_right_chan, value_type=int),
-                # tetap disediakan jika sewaktu-waktu fallback ke profile SITL
                 "rc_steer_chan": ParameterValue(rc_steer_chan, value_type=int),
                 "rc_throttle_chan": ParameterValue(rc_throttle_chan, value_type=int),
-                # PWM
                 "pwm_neutral": ParameterValue(pwm_neutral, value_type=int),
                 "pwm_fwd_max": ParameterValue(pwm_fwd_max, value_type=int),
                 "pwm_rev_min": ParameterValue(pwm_rev_min, value_type=int),
@@ -338,11 +368,15 @@ def generate_launch_description():
         "/mavros/state",
         "/mavros/rc/override",
         "/mavros/rc/in",
+        "/mavros/global_position/raw/fix",
+        "/mavros/global_position/compass_hdg",
+        "/mavros/local_position/pose",
+        "/mavros/imu/data",
         "/ca/mode_manager_state",
         "/ca/mode_manager_event",
     ]
 
-    cond_record = IfCondition(PythonExpression(["('", record, "'.lower() == 'true')"]))
+    cond_record = IfCondition(record)
 
     bag_record = ExecuteProcess(
         condition=cond_record,
@@ -359,15 +393,30 @@ def generate_launch_description():
             DeclareLaunchArgument("bag_name", default_value="phase7_cuav_usb_e2e"),
             DeclareLaunchArgument("master_enable_on_start", default_value="false"),
             DeclareLaunchArgument("failsafe_stale_is_active", default_value="true"),
+            DeclareLaunchArgument("use_mavros", default_value="true"),
             DeclareLaunchArgument("use_ca_pipeline", default_value="true"),
             DeclareLaunchArgument("use_takeover_manager", default_value="true"),
             DeclareLaunchArgument("use_mode_manager", default_value="true"),
+            # ------------------------------------------------------------------
+            # MAVROS hardware link
+            # ------------------------------------------------------------------
+            DeclareLaunchArgument("mavros_namespace", default_value="mavros"),
+            DeclareLaunchArgument(
+                "fcu_url",
+                default_value="/dev/ttyUSB0:115200",
+                description="Contoh: /dev/ttyUSB0:115200 atau /dev/ttyTHS1:115200",
+            ),
+            DeclareLaunchArgument("gcs_url", default_value=""),
+            DeclareLaunchArgument("tgt_system", default_value="1"),
+            DeclareLaunchArgument("tgt_component", default_value="1"),
+            DeclareLaunchArgument("fcu_protocol", default_value="v2.0"),
+            DeclareLaunchArgument("respawn_mavros", default_value="false"),
             # ------------------------------------------------------------------
             # hardware runtime profile
             # ------------------------------------------------------------------
             DeclareLaunchArgument(
                 "ca_runtime_profile",
-                default_value="full",
+                default_value="usb_watchdog",
                 description="usb_light | usb_watchdog | full",
             ),
             DeclareLaunchArgument(
@@ -475,6 +524,7 @@ def generate_launch_description():
             # ------------------------------------------------------------------
             # actions
             # ------------------------------------------------------------------
+            mavros_include,
             ca_include,
             mux,
             limiter,
