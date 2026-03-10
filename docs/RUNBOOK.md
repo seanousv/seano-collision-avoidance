@@ -1,53 +1,90 @@
-# Runbook (WSL2 Simulation) — Phase 5 / Phase 6
-## SITL + Mission Planner + MAVROS + SEANO Collision Avoidance
+# RUNBOOK — SEANO Collision Avoidance
+## Operasional Harian untuk Simulation Baseline dan Hardware Baseline
 
-Runbook ini adalah prosedur startup dan pengujian yang repeatable untuk stack terbaru:
+Dokumen ini adalah runbook operasional utama untuk repository **SEANO Collision Avoidance**.
 
-- ArduPilot SITL (WSL)
-- Mission Planner (Windows)
-- MAVROS2 (WSL)
-- SEANO ROS 2 stack (WSL)
-- Phase 5 mission / avoid / rejoin integration
-- Phase 6 rosbag metrics extraction
+Tujuan dokumen ini:
+- memberi urutan startup yang jelas,
+- memisahkan jalur **simulasi** dan **hardware nyata**,
+- mengurangi trial-error saat pengujian,
+- menjaga operator fokus ke launch yang memang aktif dipakai.
 
-Dokumen ini menggantikan jalur lama `run_auto_stack.launch.py` sebagai referensi utama untuk pengujian integrasi terbaru.
+Runbook ini mengikuti baseline aktif repository saat ini:
+- **Simulation baseline** → `phase5_mission_avoid_integration.launch.py`
+- **Hardware baseline** → `phase7_cuav_usb_hardware.launch.py`
 
 ---
 
-## 1. Baseline Port Map
+# 1. Prinsip Umum
 
-- Mission Planner (Windows): `14550/UDP`
-- MAVROS <-> SITL (WSL): `14551/UDP`
-- MAVProxy / ArduPilot master (internal): `5760/TCP` (umumnya)
+## 1.1 Dua baseline aktif
+Repository ini saat ini punya dua baseline aktif yang harus dibedakan dengan tegas:
 
-Catatan WSL2:
-- IP Windows host bisa berubah setiap sesi.
-- Ambil IP Windows host dari default gateway WSL:
-  ```bash
-  ip route | awk '/default/ {print $3; exit}'
+### A. Simulation baseline
+Dipakai untuk:
+- SITL mission execution,
+- validasi state machine `MISSION -> AVOID -> REJOIN -> MISSION`,
+- rosbag recording,
+- Phase 6 metrics extraction.
+
+Launch utama:
+- `phase5_mission_avoid_integration.launch.py`
+
+### B. Hardware baseline
+Dipakai untuk:
+- Jetson + CUAV X7+ + USB camera,
+- detector -> risk -> watchdog runtime,
+- RC override bridge,
+- command mux,
+- actuator safety limiter,
+- monitoring browser,
+- dockside test dan uji air.
+
+Launch utama:
+- `phase7_cuav_usb_hardware.launch.py`
+
+---
+
+## 1.2 Rule of thumb
+Gunakan aturan cepat berikut:
+
+- Jika targetnya **validasi logika mission/avoid/rejoin secara repeatable**, pakai **simulation baseline**.
+- Jika targetnya **uji bench hardware atau uji kapal nyata**, pakai **hardware baseline**.
+- Jika targetnya **cek modul tertentu saja**, pakai launch bench/debug yang lebih ringan dulu.
+
+---
+
+## 1.3 Launch bench/debug yang tetap aktif
+Launch berikut tetap berguna untuk precheck cepat:
+
+- `phase2_camera_usb_test.launch.py`
+  - cek kamera USB / source kamera by-id
+- `demo_detect.launch.py`
+  - cek jalur `camera -> detector`
+- `demo_risk.launch.py`
+  - cek jalur `camera -> detector -> risk`
+- `demo_full_ca.launch.py`
+  - cek pipeline CA lengkap untuk bench/debug non-hardware penuh
+
+---
+
+# 2. Workspace dan Build
+
+## 2.1 Lokasi workspace
+Contoh asumsi lokasi repo:
+```bash
+~/seano-collision-avoidance
 ````
 
----
+Workspace ROS 2:
 
-## 2. Startup Order (Wajib)
+```bash
+~/seano-collision-avoidance/seano_ca_ws
+```
 
-Komponen dijalankan berurutan:
+## 2.2 Build package utama
 
-1. ArduPilot SITL (WSL)
-2. Mission Planner (Windows)
-3. MAVROS2 (WSL)
-4. SEANO ROS 2 stack (WSL)
-
-Kalau SITL di-restart:
-
-* restart MAVROS,
-* lalu restart stack SEANO.
-
----
-
-## 3. Build Workspace
-
-Jalankan ini setiap kali ada perubahan file:
+Jalankan setiap kali ada perubahan pada package `seano_vision`:
 
 ```bash
 cd ~/seano-collision-avoidance/seano_ca_ws
@@ -56,15 +93,73 @@ colcon build --packages-select seano_vision --symlink-install
 source install/setup.bash
 ```
 
-Expected:
+## 2.3 Expected
+
+Expected minimum:
 
 * build selesai tanpa error,
-* package `seano_vision` terpasang,
-* tidak ada traceback Python dari launch/node terbaru.
+* package `seano_vision` berhasil terpasang,
+* tidak ada traceback Python dari launch/node aktif.
 
 ---
 
-## 4. Terminal 1 (WSL) — Start ArduPilot SITL
+# 3. Simulation Baseline
+
+## SITL + Mission Planner + MAVROS + Phase 5
+
+Simulation baseline dipakai untuk pengujian end-to-end yang paling repeatable sebelum turun ke hardware nyata.
+
+---
+
+## 3.1 Tujuan utama simulasi
+
+Gunakan simulasi untuk:
+
+* validasi mode `MISSION`,
+* validasi trigger `AVOID`,
+* validasi pelepasan takeover,
+* validasi `REJOIN`,
+* validasi kembali ke jalur mission,
+* rosbag evidence untuk analisis Phase 6.
+
+---
+
+## 3.2 Port map simulasi
+
+Baseline port map:
+
+* Mission Planner (Windows): `14550/UDP`
+* MAVROS <-> SITL (WSL/Linux): `14551/UDP`
+* MAVProxy / ArduPilot master: biasanya `5760/TCP`
+
+Jika menggunakan WSL2, IP host Windows bisa berubah tiap sesi.
+Ambil IP host Windows dari default gateway:
+
+```bash
+ip route | awk '/default/ {print $3; exit}'
+```
+
+---
+
+## 3.3 Startup order simulasi
+
+Urutan startup **wajib**:
+
+1. ArduPilot SITL
+2. Mission Planner
+3. MAVROS
+4. Launch `phase5_mission_avoid_integration.launch.py`
+
+Kalau SITL restart:
+
+* restart MAVROS,
+* lalu restart stack SEANO.
+
+---
+
+## 3.4 Terminal 1 — Start SITL
+
+Contoh:
 
 ```bash
 cd ~/tools/ardupilot
@@ -76,594 +171,639 @@ sim_vehicle.py -v Rover -f rover-skid --console --map \
   --out udp:127.0.0.1:14551
 ```
 
-Expected:
+### Expected
 
-* MAVProxy console terbuka,
-* map SITL terbuka,
-* SITL mengirim MAVLink ke:
+* MAVProxy console muncul,
+* map SITL muncul,
+* data MAVLink keluar ke:
 
-  * Mission Planner (Windows) `WIN_HOST_IP:14550`
-  * MAVROS (WSL) `127.0.0.1:14551`
-
----
-
-## 5. Mission Planner (Windows) — Connect
-
-* Connection type: `UDP`
-* Port: `14550`
-* Klik **Connect**
-
-Expected:
-
-* vehicle terlihat,
-* map menampilkan rover,
-* mode vehicle terbaca.
+  * Mission Planner (`14550`)
+  * MAVROS (`14551`)
 
 ---
 
-## 6. Terminal 2 (WSL) — Start MAVROS2
+## 3.5 Mission Planner — Connect
+
+Di Mission Planner:
+
+* pilih **UDP**
+* port `14550`
+* klik **Connect**
+
+### Expected
+
+* vehicle muncul,
+* mode vehicle terbaca,
+* waypoint mission bisa di-load.
+
+---
+
+## 3.6 Terminal 2 — Start MAVROS
 
 ```bash
 source /opt/ros/humble/setup.bash
 ros2 launch mavros apm.launch fcu_url:=udp://0.0.0.0:14551@127.0.0.1:14551
 ```
 
-Expected:
-
-* `/mavros/state` menjadi `connected: true`
-
-Verifikasi cepat:
+### Verifikasi cepat
 
 ```bash
 ros2 topic echo /mavros/state -n 1
+```
+
+### Expected
+
+Minimal:
+
+* `connected: true`
+* mode terbaca
+* armed status terbaca
+
+---
+
+## 3.7 Terminal 3 — Start simulation baseline utama
+
+```bash
+cd ~/seano-collision-avoidance/seano_ca_ws
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+
+ros2 launch seano_vision phase5_mission_avoid_integration.launch.py
+```
+
+### Peran launch ini
+
+Launch ini dipakai untuk:
+
+* mission-following,
+* temporary avoidance takeover,
+* release takeover,
+* `REJOIN`,
+* kembali ke mission.
+
+---
+
+## 3.8 Monitoring minimum simulasi
+
+Buka terminal monitor tambahan sesuai kebutuhan.
+
+### State machine
+
+```bash
+ros2 topic echo /ca/mode_manager_state
+```
+
+### Event state machine
+
+```bash
+ros2 topic echo /ca/mode_manager_event
+```
+
+### Status flight controller
+
+```bash
+ros2 topic echo /mavros/state
+```
+
+### Command collision avoidance
+
+```bash
+ros2 topic echo /ca/command
+```
+
+### Risk
+
+```bash
+ros2 topic echo /ca/risk
+```
+
+---
+
+## 3.9 Kriteria lulus simulasi
+
+Simulation baseline dianggap sehat jika urutan berikut bisa terjadi:
+
+1. vehicle menjalankan mission waypoint,
+2. trigger obstacle / hazard memaksa sistem masuk `AVOID`,
+3. vehicle keluar dari jalur nominal,
+4. saat hazard hilang sistem melepas takeover,
+5. state masuk `REJOIN`,
+6. vehicle kembali ke mission-following,
+7. mission lanjut sampai waypoint berikutnya.
+
+Target state:
+
+```text
+MISSION -> AVOID -> REJOIN -> MISSION
+```
+
+---
+
+## 3.10 Jika simulasi tidak sehat
+
+Gunakan aturan cepat berikut:
+
+### Jika MAVROS tidak connect
+
+Cek:
+
+```bash
+ros2 topic echo /mavros/state -n 1
+```
+
+Jika belum connect:
+
+* cek SITL masih hidup,
+* cek port `14551`,
+* restart MAVROS.
+
+### Jika state machine tidak kembali ke mission
+
+Cek:
+
+* event `REJOIN_*`,
+* mode autopilot,
+* apakah publisher takeover masih aktif,
+* apakah ada failsafe yang masih menahan output.
+
+### Jika perception pipeline mengganggu pengujian logika mission
+
+Fokuskan dulu pengujian ke mode/state manager,
+lalu naik bertahap ke full integration.
+
+---
+
+# 4. Hardware Baseline
+
+## Jetson + CUAV X7+ + USB camera + Phase 7
+
+Hardware baseline adalah jalur utama untuk bench hardware, dockside test, dan uji air.
+
+---
+
+## 4.1 Tujuan utama hardware baseline
+
+Gunakan baseline ini untuk target nyata berikut:
+
+1. autopilot berada di `AUTO` dan mengikuti waypoint,
+2. kamera membaca kondisi depan kapal,
+3. detector menghasilkan detections,
+4. risk evaluator menghasilkan keputusan collision avoidance,
+5. watchdog mengawasi kualitas persepsi,
+6. command mux mengatur sumber command,
+7. RC override bridge menerjemahkan command ke kontrol FC,
+8. saat obstacle muncul kapal keluar jalur,
+9. saat aman kapal kembali ke jalur mission,
+10. mission berlanjut sampai selesai.
+
+---
+
+## 4.2 Startup order hardware
+
+Urutan startup **wajib** untuk hardware nyata:
+
+1. pastikan wiring dan power stabil,
+2. nyalakan FC / CUAV X7+,
+3. pastikan kamera USB terdeteksi,
+4. start `phase7_cuav_usb_hardware.launch.py`,
+5. start browser monitoring,
+6. lakukan precheck topic dan status,
+7. baru lanjut ke dockside test,
+8. baru lanjut ke uji air.
+
+---
+
+## 4.3 Precheck sebelum launch hardware
+
+Sebelum menjalankan `phase7`, cek perangkat inti.
+
+### Cek device serial FC
+
+```bash
+ls /dev/ttyACM*
+```
+
+### Cek kamera USB
+
+```bash
+v4l2-ctl --list-devices
+ls -l /dev/v4l/by-id
+```
+
+### Cek package sudah ter-build
+
+```bash
+cd ~/seano-collision-avoidance/seano_ca_ws
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+ros2 pkg prefix seano_vision
+```
+
+---
+
+## 4.4 Jalankan hardware baseline utama
+
+Contoh:
+
+```bash
+cd ~/seano-collision-avoidance/seano_ca_ws
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+
+ros2 launch seano_vision phase7_cuav_usb_hardware.launch.py \
+  fcu_url:=/dev/ttyACM0:115200
+```
+
+Jika perlu, sesuaikan `fcu_url` dengan device aktual FC Anda.
+
+---
+
+## 4.5 Peran launch phase7
+
+Launch ini adalah orkestrasi hardware utama yang dipakai untuk:
+
+* camera source hardware,
+* detector,
+* risk evaluator,
+* watchdog failsafe,
+* command mux,
+* actuator safety limiter,
+* MAVROS,
+* RC override bridge,
+* mission mode manager,
+* auto controller stub / control helper sesuai baseline saat ini.
+
+Intinya:
+**phase7 adalah satu run paling lengkap untuk target collision avoidance pada hardware nyata.**
+
+---
+
+## 4.6 Topic minimum yang harus hidup
+
+Setelah `phase7` jalan, cek topic minimum ini.
+
+### Image / monitoring
+
+```bash
+ros2 topic list | grep -E "image_raw_reliable|image_annotated|debug_image"
 ```
 
 Expected minimal:
 
-* `connected: true`
-* `mode` terbaca
-* `armed` sesuai kondisi
+* `/seano/camera/image_raw_reliable`
+* `/camera/image_annotated` atau topic annotated aktif yang setara
+* `/ca/debug_image`
 
----
-
-## 7. Phase 5 Runtime Modes
-
-Launch utama:
+### Detections
 
 ```bash
-ros2 launch seano_vision phase5_mission_avoid_integration.launch.py ...
+ros2 topic echo /camera/detections
 ```
 
-Mode pengujian dibagi menjadi 3 kasus utama:
-
-* **Kasus A** — mode manager only
-* **Kasus B** — takeover logic only
-* **Kasus C** — full integration (synthetic camera)
-
----
-
-## 8. Kasus A — Mode Manager Only
-
-Tujuan:
-
-* validasi state machine:
-
-  * `MISSION -> AVOID -> REJOIN -> MISSION`
-* tanpa gangguan perception pipeline
-* tanpa bentrok publisher takeover manager
-
-### Jalankan
+### Risk
 
 ```bash
-cd ~/seano-collision-avoidance/seano_ca_ws
-source /opt/ros/humble/setup.bash
-source install/setup.bash
-
-ros2 launch seano_vision phase5_mission_avoid_integration.launch.py \
-  use_ca_pipeline:=false \
-  use_takeover_manager:=false
+ros2 topic echo /ca/risk
 ```
 
-### Monitor
-
-Terminal monitor 1:
+### Command
 
 ```bash
-ros2 topic echo /ca/mode_manager_state
+ros2 topic echo /ca/command
 ```
 
-Terminal monitor 2:
-
-```bash
-ros2 topic echo /ca/mode_manager_event
-```
-
-Terminal monitor 3:
-
-```bash
-ros2 topic echo /mavros/state
-```
-
-### Trigger manual takeover
-
-```bash
-ros2 topic pub --once /seano/rc_override_enable std_msgs/msg/Bool "{data: true}"
-sleep 3
-ros2 topic pub --once /seano/rc_override_enable std_msgs/msg/Bool "{data: false}"
-```
-
-### Expected
-
-State:
-
-* awal: `MISSION`
-* publish `true`: `AVOID`
-* publish `false`: `REJOIN`
-* beberapa saat kemudian: `MISSION`
-
-Event minimum yang diharapkan:
-
-* `TAKEOVER_ON`
-* `MODE_REQ_SENT`
-* `MODE_REQ_DONE`
-* `TAKEOVER_OFF`
-* `REJOIN_START`
-* `REJOIN_MODE_MATCH`
-* `REJOIN_DONE`
-
-Yang tidak boleh terjadi:
-
-* `FAILSAFE_ON/OFF` bolak-balik sendiri
-
----
-
-## 9. Kasus B — Takeover Logic Only
-
-Tujuan:
-
-* validasi `auto_controller_stub_node`
-* validasi jalur command hazard -> takeover -> release
-* tanpa noise dari perception / watchdog
-
-### Jalankan
-
-```bash
-cd ~/seano-collision-avoidance/seano_ca_ws
-source /opt/ros/humble/setup.bash
-source install/setup.bash
-
-ros2 launch seano_vision phase5_mission_avoid_integration.launch.py \
-  use_ca_pipeline:=false \
-  use_takeover_manager:=true \
-  master_enable_on_start:=true
-```
-
-### Monitor
-
-```bash
-ros2 topic echo /ca/mode_manager_state
-ros2 topic echo /ca/mode_manager_event
-ros2 topic echo /mavros/state
-```
-
-### Trigger command hazard
-
-```bash
-ros2 topic pub --once /ca/command_safe std_msgs/msg/String "{data: 'TURN_RIGHT'}"
-sleep 3
-ros2 topic pub --once /ca/command_safe std_msgs/msg/String "{data: 'HOLD_COURSE'}"
-```
-
-Opsional tambahan:
-
-```bash
-ros2 topic pub --once /ca/command_safe std_msgs/msg/String "{data: 'TURN_LEFT'}"
-sleep 3
-ros2 topic pub --once /ca/command_safe std_msgs/msg/String "{data: 'HOLD_COURSE'}"
-```
-
-### Expected
-
-* `TURN_RIGHT` / `TURN_LEFT` memicu takeover
-* `/seano/rc_override_enable` menjadi `true`
-* state menjadi `AVOID`
-* saat `HOLD_COURSE`, takeover release
-* state menjadi `REJOIN`, lalu `MISSION`
-
----
-
-## 10. Kasus C — Full Integration (Synthetic Camera)
-
-Tujuan:
-
-* validasi stack integrasi penuh
-* tetap ringan di WSL
-* tidak bergantung pada kamera hardware
-
-### Default yang dipakai sekarang
-
-Mode default:
-
-* `ca_runtime_profile:=synthetic_light`
-
-Artinya:
-
-* source kamera: synthetic / dummy camera
-* detector aktif
-* risk aktif
-* watchdog / freeze / fusion / waterline / vision quality tidak dibebani penuh seperti mode full
-
-### Jalankan (default ringan)
-
-```bash
-cd ~/seano-collision-avoidance/seano_ca_ws
-source /opt/ros/humble/setup.bash
-source install/setup.bash
-
-ros2 launch seano_vision phase5_mission_avoid_integration.launch.py \
-  use_ca_pipeline:=true \
-  use_takeover_manager:=true \
-  master_enable_on_start:=true
-```
-
-### Verifikasi dummy camera
-
-```bash
-ros2 topic info /seano/camera/image_raw_reliable
-ros2 topic hz /seano/camera/image_raw_reliable
-```
-
-Expected:
-
-* topic ada walaupun kamera hardware tidak dipasang
-* frekuensi sekitar 10 Hz
-* stack tetap berjalan ringan
-
-### Mode synthetic + watchdog
-
-Kalau ingin mulai uji failsafe sintetis:
-
-```bash
-ros2 launch seano_vision phase5_mission_avoid_integration.launch.py \
-  use_ca_pipeline:=true \
-  use_takeover_manager:=true \
-  master_enable_on_start:=true \
-  ca_runtime_profile:=synthetic_watchdog
-```
-
-### Mode full
-
-Kalau ingin jalur penuh:
-
-```bash
-ros2 launch seano_vision phase5_mission_avoid_integration.launch.py \
-  use_ca_pipeline:=true \
-  use_takeover_manager:=true \
-  master_enable_on_start:=true \
-  ca_runtime_profile:=full
-```
-
-Catatan:
-
-* `full` adalah mode paling berat
-* gunakan setelah `synthetic_light` dan `synthetic_watchdog` stabil
-
----
-
-## 11. Validation Commands
-
-### 11.1 MAVROS connected
+### MAVROS state
 
 ```bash
 ros2 topic echo /mavros/state -n 1
 ```
 
-### 11.2 Mode manager state
+### Watchdog status
 
 ```bash
-ros2 topic echo /ca/mode_manager_state
+ros2 topic echo /ca/watchdog_status
 ```
 
-### 11.3 Mode manager event
-
-```bash
-ros2 topic echo /ca/mode_manager_event
-```
-
-### 11.4 RC override
-
-```bash
-ros2 topic echo /mavros/rc/override -n 5
-```
-
-### 11.5 Duplicate publisher check
-
-```bash
-ros2 topic info -v /seano/rc_override_enable
-ros2 topic info -v /ca/command_safe
-ros2 topic info -v /seano/auto_enable
-```
+Jika topic status tidak muncul terus-menerus, cek nama topic aktual di runtime.
 
 ---
 
-## 12. Phase 6 — Standard Rosbag Test Scenarios
+## 4.7 Browser monitoring
+
+Monitoring browser sangat disarankan saat bench dan uji lapangan.
+
+Jalankan `web_video_server`, lalu buka stream untuk:
+
+* raw camera,
+* annotated image,
+* HUD / debug image.
+
+Contoh pola URL:
+
+```text
+http://localhost:8081/stream?topic=/seano/camera/image_raw_reliable
+http://localhost:8081/stream?topic=/camera/image_annotated
+http://localhost:8081/stream?topic=/ca/debug_image
+http://localhost:8081/snapshot?topic=/ca/debug_image
+```
+
+Catatan:
+
+* port forwarding editor/SSH bisa membuat `8080` di remote terlihat sebagai `8081` di lokal,
+* selalu lihat panel **Ports** untuk alamat final yang benar.
+
+---
+
+## 4.8 Bench test bertahap sebelum ke air
+
+Jangan langsung loncat ke uji air penuh.
+Gunakan urutan ini.
+
+### Tahap 1 — kamera saja
+
+```bash
+ros2 launch seano_vision phase2_camera_usb_test.launch.py
+```
+
+Lulus jika:
+
+* raw image stabil,
+* FPS masuk akal,
+* tidak ada reconnect loop abnormal.
+
+### Tahap 2 — detector
+
+```bash
+ros2 launch seano_vision demo_detect.launch.py
+```
+
+Lulus jika:
+
+* raw image masuk,
+* annotated image keluar,
+* detections keluar.
+
+### Tahap 3 — risk
+
+```bash
+ros2 launch seano_vision demo_risk.launch.py
+```
+
+Lulus jika:
+
+* detections terbaca,
+* `/ca/risk` dan `/ca/command` keluar,
+* HUD/debug image tampil.
+
+### Tahap 4 — full phase7 bench
+
+```bash
+ros2 launch seano_vision phase7_cuav_usb_hardware.launch.py \
+  fcu_url:=/dev/ttyACM0:115200
+```
+
+Lulus jika:
+
+* MAVROS connect,
+* image/detection/risk/command aktif,
+* watchdog tidak salah-trigger saat kondisi sehat,
+* browser monitoring bisa dipakai.
+
+---
+
+## 4.9 Dockside test checklist
+
+Sebelum kapal masuk air, minimal lolos checklist berikut:
+
+### FC / autopilot
+
+* FC connect stabil
+* mode terbaca
+* GPS / heading / basic navigation sehat
+* waypoint mission sudah di-load
+
+### Camera / vision
+
+* raw image tampil
+* annotated image tampil
+* HUD/debug image tampil
+* detection ada saat obstacle muncul
+
+### CA control chain
+
+* risk aktif
+* command aktif
+* mux aktif
+* safety limiter aktif
+* RC override bridge aktif
+
+### Operator readiness
+
+* operator tahu cara pindah MANUAL / AUTO
+* operator tahu cara abort
+* operator tahu topic/monitor yang dilihat
+* operator tahu kondisi kapan test dihentikan
+
+---
+
+## 4.10 Uji air — urutan paling aman
+
+Dengan waktu lapangan yang terbatas, pakai urutan ini.
+
+### Run A — mission tanpa obstacle
 
 Tujuan:
 
-* menghasilkan bag yang konsisten
-* bisa dihitung dengan `phase6_metrics_from_bag.py`
-* menghasilkan metrik:
+* validasi kapal bisa mengikuti waypoint normal di `AUTO`
+* memastikan baseline autopilot dan integrasi phase7 tidak merusak mission dasar
 
-  * takeover count
-  * takeover duration
-  * reaction time
-  * release time
-  * rejoin time
-  * failsafe count
-  * mode mismatch ratio
+Lulus jika:
 
-### Skenario Uji 1 — Hazard / Rejoin
+* kapal mengikuti mission,
+* tidak ada trigger avoid palsu,
+* tidak ada STOP/failsafe abnormal.
 
-Gunakan mode:
-
-* Kasus B, atau
-* Kasus C synthetic_light
-
-#### Start record
-
-```bash
-ros2 launch seano_vision phase5_mission_avoid_integration.launch.py \
-  record:=true \
-  bag_name:=phase6_rejoin_run_01 \
-  use_ca_pipeline:=true \
-  use_takeover_manager:=true \
-  master_enable_on_start:=true
-```
-
-#### Trigger sequence
-
-Terminal lain:
-
-```bash
-ros2 topic pub --once /ca/command_safe std_msgs/msg/String "{data: 'TURN_RIGHT'}"
-sleep 3
-ros2 topic pub --once /ca/command_safe std_msgs/msg/String "{data: 'HOLD_COURSE'}"
-
-sleep 2
-
-ros2 topic pub --once /ca/command_safe std_msgs/msg/String "{data: 'TURN_LEFT'}"
-sleep 3
-ros2 topic pub --once /ca/command_safe std_msgs/msg/String "{data: 'HOLD_COURSE'}"
-```
-
-#### Stop record
-
-* hentikan launch dengan `Ctrl+C`
-
-#### Expected
-
-* takeover segments >= 1
-* reaction time terisi
-* release time terisi
-* rejoin time terisi
-* `REJOIN_DONE` muncul
-* mismatch ratio rendah / nol
-
----
-
-### Skenario Uji 2 — Failsafe
-
-Gunakan mode:
-
-* `synthetic_watchdog`
-
-#### Start record
-
-```bash
-ros2 launch seano_vision phase5_mission_avoid_integration.launch.py \
-  record:=true \
-  bag_name:=phase6_failsafe_run_01 \
-  use_ca_pipeline:=true \
-  use_takeover_manager:=true \
-  master_enable_on_start:=true \
-  ca_runtime_profile:=synthetic_watchdog
-```
-
-#### Trigger failsafe
-
-Cara paling sederhana untuk uji di WSL:
-
-* stop node camera source dari terminal launch,
-* atau hentikan launch lalu catat bahwa bag ini khusus failsafe,
-* atau gunakan metode internal lain yang memang memicu `failsafe_active`.
-
-Jika testing dilakukan dengan mematikan image source, expected:
-
-* `/ca/failsafe_active` menjadi `true`
-* mode manager masuk `FAILSAFE`
-* vehicle masuk mode aman
-* event `FAILSAFE_ON` terekam
-
-#### Expected
-
-* `failsafe.rises >= 1`
-* event `FAILSAFE_ON` muncul
-* kalau clear, `FAILSAFE_OFF` muncul
-
----
-
-### Skenario Uji 3 — Repeated Hazard / Rejoin
+### Run B — obstacle statis sederhana
 
 Tujuan:
 
-* mengukur konsistensi
+* validasi obstacle terdeteksi,
+* validasi `AVOID` aktif,
+* validasi kapal keluar dari jalur nominal
 
-Gunakan mode:
+Lulus jika:
 
-* Kasus C default
+* obstacle muncul di kamera,
+* HUD menunjukkan risk/command masuk akal,
+* kapal benar-benar mengubah jalur.
 
-Record 2–3 bag terpisah:
+### Run C — obstacle clear / release
 
-* `phase6_rejoin_run_02`
-* `phase6_rejoin_run_03`
+Tujuan:
 
-Lalu bandingkan:
+* validasi takeover dilepas,
+* validasi masuk `REJOIN`,
+* validasi kapal kembali ke mission
 
-* `reaction_time_s.mean`
-* `release_time_s.mean`
-* `rejoin_time_s.mean`
+Lulus jika:
+
+* hazard hilang,
+* command avoid berhenti,
+* kapal kembali ke jalur mission dan lanjut waypoint berikutnya.
+
+### Run D — mission lengkap
+
+Tujuan:
+
+* validasi end-to-end:
+
+```text
+AUTO mission -> obstacle detected -> avoid -> safe -> rejoin -> continue mission -> finish
+```
+
+Ini adalah run yang paling penting untuk membuktikan sistem collision avoidance berhasil.
 
 ---
 
-## 13. Extract Metrics from Rosbag
+## 4.11 Kriteria lulus hardware/uji air
 
-Jalankan extractor:
+Target minimal keberhasilan sistem adalah:
+
+1. kapal mulai di `AUTO` dan mengikuti waypoint,
+2. obstacle terlihat di kamera,
+3. detector dan risk merespons,
+4. command avoidance keluar,
+5. kapal keluar dari jalur untuk menghindar,
+6. setelah obstacle aman/tidak terlihat, takeover dilepas,
+7. sistem masuk `REJOIN`,
+8. kapal kembali ke mission path,
+9. kapal lanjut ke waypoint berikutnya sampai misi selesai.
+
+Kalau salah satu rantai di atas putus,
+maka uji belum boleh disebut **collision avoidance end-to-end berhasil**.
+
+---
+
+# 5. Quick Commands
+
+## Command ringkas yang paling sering dipakai
+
+## 5.1 Build
 
 ```bash
-python3 ~/seano-collision-avoidance/seano_ca_ws/src/seano_vision/scripts/phase6_metrics_from_bag.py \
-  --bag ~/bags/phase6_rejoin_run_01
+cd ~/seano-collision-avoidance/seano_ca_ws
+source /opt/ros/humble/setup.bash
+colcon build --packages-select seano_vision --symlink-install
+source install/setup.bash
 ```
 
-Expected:
-
-* summary tercetak di terminal
-* file tersimpan:
-
-  ```bash
-  ~/bags/phase6_rejoin_run_01/phase6_metrics.json
-  ```
-
-### Buka hasil JSON
+## 5.2 Simulation baseline
 
 ```bash
-python3 -m json.tool ~/bags/phase6_rejoin_run_01/phase6_metrics.json
+ros2 launch seano_vision phase5_mission_avoid_integration.launch.py
 ```
 
-### Fokus lihat bagian ini
+## 5.3 Hardware baseline
 
-* `override`
-* `reaction_time_s`
-* `release_time_s`
-* `rejoin`
-* `rejoin_time_s`
-* `failsafe`
-* `mode_mismatch`
-
----
-
-## 14. Interpretasi Cepat Metrik
-
-### `override.takeover_segments`
-
-Jumlah segmen takeover yang terjadi.
-
-### `reaction_time_s.mean`
-
-Rata-rata waktu dari hazard command ke override ON.
-
-### `release_time_s.mean`
-
-Rata-rata waktu dari clear command ke override OFF.
-
-### `rejoin_time_s.mean`
-
-Rata-rata waktu dari `REJOIN_START` ke `REJOIN_DONE`.
-
-### `failsafe.rises`
-
-Jumlah event failsafe aktif.
-
-### `mode_mismatch.mismatch_ratio`
-
-Rasio saat state `MISSION` tetapi mode MAVROS bukan `AUTO`.
-
-Target yang baik:
-
-* takeover segment terisi
-* reaction / release / rejoin terisi
-* failsafe muncul pada skenario failsafe
-* mismatch ratio serendah mungkin
-
----
-
-## 15. Common Failure Modes
-
-### Mission Planner tidak connect
-
-* cek `WIN_HOST_IP`
-* cek `--out udp:${WIN_HOST_IP}:14550`
-
-### MAVROS `connected: false`
-
-* cek SITL kirim ke `127.0.0.1:14551`
-* cek MAVROS memakai:
-
-  ```bash
-  udp://0.0.0.0:14551@127.0.0.1:14551
-  ```
-
-### State `MISSION -> FAILSAFE -> REJOIN -> MISSION` berulang sendiri
-
-* kemungkinan watchdog / perception chain aktif
-* gunakan:
-
-  * Kasus A untuk test mode manager murni
-  * Kasus B untuk test takeover logic murni
-  * Kasus C default (`synthetic_light`) untuk integrasi ringan
-
-### Publish manual takeover tidak bekerja
-
-* cek apakah `auto_controller_stub_node` aktif
-* kalau aktif, topic `/seano/rc_override_enable` bisa punya publisher lain
-* untuk uji manual takeover, gunakan **Kasus A**
-
-### Metrik `rejoin_time_s` kosong
-
-* bag tidak memiliki `REJOIN_START -> REJOIN_DONE`
-* atau skenario tidak benar-benar memicu rejoin penuh
-
-### Metrik `failsafe` kosong
-
-* bag tidak merekam `/ca/failsafe_active`
-* atau run yang direkam memang tidak memicu failsafe
-
----
-
-## 16. Output Minimum yang Harus Dianggap Valid
-
-Satu run Phase 5 / Phase 6 dianggap valid bila:
-
-* `/mavros/state connected: true`
-* state manager menunjukkan:
-
-  * `MISSION -> AVOID -> REJOIN -> MISSION`
-* event manager menunjukkan:
-
-  * `TAKEOVER_ON`
-  * `TAKEOVER_OFF`
-  * `REJOIN_START`
-  * `REJOIN_DONE`
-* extractor menghasilkan:
-
-  * `takeover_segments >= 1`
-  * `reaction_time_s.n >= 1`
-  * `release_time_s.n >= 1`
-  * `rejoin_time_s.n >= 1`
-
----
-
-## 17. Rekomendasi Operasional
-
-Urutan kerja yang direkomendasikan:
-
-1. Kasus A — validasi state machine
-2. Kasus B — validasi takeover logic
-3. Kasus C synthetic_light — validasi integrasi ringan
-4. Phase 6 rejoin bag
-5. Phase 6 failsafe bag
-6. Ulang 2–3 run untuk konsistensi
-7. Baru naik ke kamera hardware / USB
-
-Dokumen ini menjadi baseline utama untuk pengujian simulasi terbaru.
-
+```bash
+ros2 launch seano_vision phase7_cuav_usb_hardware.launch.py \
+  fcu_url:=/dev/ttyACM0:115200
 ```
+
+## 5.4 Bench detect
+
+```bash
+ros2 launch seano_vision demo_detect.launch.py
+```
+
+## 5.5 Bench risk
+
+```bash
+ros2 launch seano_vision demo_risk.launch.py
+```
+
+## 5.6 Camera precheck
+
+```bash
+ros2 launch seano_vision phase2_camera_usb_test.launch.py
+```
+
+## 5.7 Browser monitoring helper
+
+```bash
+ros2 run web_video_server web_video_server
+```
+
+---
+
+# 6. Hal yang Jangan Dilakukan
+
+* Jangan pakai launch audit-later sebagai baseline utama untuk uji kapal.
+* Jangan rename launch aktif menjelang pengujian lapangan.
+* Jangan langsung uji air jika bench camera/detector/risk belum lulus.
+* Jangan menyimpulkan collision avoidance berhasil hanya dari bench image; bukti utamanya adalah perilaku kapal:
+
+  * keluar jalur saat obstacle,
+  * kembali ke mission saat aman.
+
+---
+
+# 7. Rekomendasi Operasional untuk Hari Uji yang Singkat
+
+Kalau waktu pengujian hanya satu hari, pakai strategi ini:
+
+1. pagi:
+
+   * bench camera
+   * bench detector
+   * bench risk
+   * phase7 full bench
+2. siang awal:
+
+   * dockside AUTO tanpa obstacle
+3. siang:
+
+   * AUTO dengan obstacle statis sederhana
+4. sore:
+
+   * validasi release + rejoin + lanjut mission
+5. akhir:
+
+   * simpan evidence:
+
+     * video monitoring
+     * screenshot HUD
+     * rosbag jika tersedia
+     * catatan hasil tiap run
+
+Fokus utama:
+**jangan mengejar terlalu banyak skenario.**
+Kejar dulu satu bukti kuat:
+
+```text
+mission -> avoid -> rejoin -> mission complete
+```
+
+---
+
+# 8. Dokumen Pendamping
+
+Baca dokumen ini bersama:
+
+* `docs/LAUNCH_STATUS_MAP.md`
+* `docs/ARCHITECTURE.md`
+* `docs/PHASE6_TEST_MATRIX.md`
+* `docs/PHASE6_RESULTS_SUMMARY.md`
+
+---
+
+# 9. Tujuan Dokumen Ini
+
+Dokumen ini dibuat agar operator/pengembang bisa:
+
+* cepat memilih jalur run yang benar,
+* tidak mencampur simulasi dan hardware,
+* tidak salah memilih launch utama,
+* fokus ke target akhir proyek:
+
+**USV mengikuti waypoint mission, menghindari obstacle saat berbahaya, lalu kembali ke jalur mission setelah aman sampai misi selesai.**

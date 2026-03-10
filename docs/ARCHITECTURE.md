@@ -1,38 +1,47 @@
-# Architecture Overview — Phase 5 / Phase 6
+# Architecture Overview — SEANO Collision Avoidance
+## Arsitektur aktif untuk Simulation Baseline dan Hardware Baseline
 
-Dokumen ini menjelaskan arsitektur runtime terbaru dari modul collision avoidance SEANO pada simulasi WSL2 / ROS 2 Humble.
+Dokumen ini menjelaskan arsitektur runtime aktif dari modul collision avoidance SEANO pada dua baseline yang saat ini dipakai:
 
-Arsitektur ini merepresentasikan baseline aktif yang sekarang dipakai untuk pengujian integrasi:
-- differential-thrust control (`left_cmd/right_cmd`)
-- mission / avoid / rejoin mode handling
-- MAVROS RC override bridge
-- synthetic camera path untuk pengujian ringan
-- rosbag metrics extraction untuk evaluasi Phase 6
+- **Simulation baseline**
+  SITL + Mission Planner + MAVROS + `phase5_mission_avoid_integration.launch.py`
+
+- **Hardware baseline**
+  Jetson + CUAV X7+ + USB camera + MAVROS + `phase7_cuav_usb_hardware.launch.py`
+
+Dokumen ini menggantikan cara pandang lama yang hanya berfokus pada:
+- simulasi WSL2,
+- synthetic camera,
+- Phase 5 / Phase 6 sebagai satu-satunya baseline aktif.
+
+Sekarang arsitektur aktif harus dibaca sebagai:
+- **simulasi** untuk validasi repeatable dan evidence extraction,
+- **hardware** untuk bench integration dan field-test preparation.
 
 ---
 
 ## 1. Tujuan Arsitektur
 
-Tujuan utama arsitektur ini:
+Tujuan utama arsitektur ini adalah:
 
-1. Menjaga **autopilot mission** tetap menjadi penggerak utama waypoint.
+1. Menjaga **autopilot mission** tetap menjadi penggerak utama waypoint mission.
 2. Memberi **lapisan collision avoidance** yang dapat mengambil alih sementara saat ada risiko.
 3. Mengembalikan sistem ke mission secara formal melalui state:
    - `MISSION`
    - `AVOID`
    - `REJOIN`
    - `FAILSAFE`
-4. Memisahkan:
+4. Memisahkan lapisan:
    - perception,
    - decision,
    - control selection,
    - actuation safety,
    - autopilot mode handling,
+   - monitoring,
    agar mudah diuji per lapis.
-5. Menyediakan jalur simulasi yang repeatable untuk:
-   - Case A — mode manager only
-   - Case B — takeover logic only
-   - Case C — full integration (synthetic camera)
+5. Menyediakan dua jalur aktif:
+   - jalur simulasi yang repeatable,
+   - jalur hardware yang realistis untuk integrasi Jetson + FCU + kamera.
 
 ---
 
@@ -46,93 +55,164 @@ Karena itu, antarmuka kontrol internal utama bukan rudder, tetapi:
 - `right_cmd`
 
 Keputusan ini dipakai agar perilaku kontrol sesuai dengan fisik kendaraan:
+
 - maju lurus: `left == right`
 - belok kanan: `left > right`
 - belok kiri: `right > left`
 
+Konsekuensinya:
+- jalur aktuasi internal dibangun untuk left/right command,
+- bridge ke FCU bertugas menerjemahkan command ini ke RC override / PWM yang sesuai.
+
 ---
 
-## 3. Arsitektur Tingkat Tinggi
+## 3. Dua Baseline Aktif
+
+### 3.1 Simulation baseline
+Dipakai untuk:
+- validasi state machine,
+- validasi mission -> avoid -> rejoin,
+- pengujian synthetic perception,
+- rosbag recording,
+- Phase 6 metrics extraction.
+
+Launch utama:
+- `phase5_mission_avoid_integration.launch.py`
+
+Karakter utama:
+- repeatable,
+- ringan,
+- mudah direkam,
+- kuat untuk evidence kuantitatif TA.
+
+---
+
+### 3.2 Hardware baseline
+Dipakai untuk:
+- validasi FCU nyata,
+- validasi kamera USB nyata,
+- validasi detector -> risk -> watchdog,
+- validasi browser monitoring,
+- bench test dan field-test preparation.
+
+Launch utama:
+- `phase7_cuav_usb_hardware.launch.py`
+
+Karakter utama:
+- realistis,
+- bergantung pada kondisi perangkat,
+- menuntut kestabilan perception,
+- sangat sensitif pada pencahayaan, kualitas kamera, dan kondisi lapangan.
+
+---
+
+## 4. Arsitektur Tingkat Tinggi
 
 ```mermaid
 flowchart LR
 
 subgraph MissionLayer["Mission / Autopilot Layer"]
-    MP["Mission Planner / Mission Waypoints"]
-    FCU["ArduPilot FCU (SITL / HW)"]
-    MP --> FCU
+MP["Mission Planner / Mission Waypoints"]
+SITL["ArduPilot SITL"]
+HWFCU["CUAV X7+ / ArduPilot HW"]
 end
 
 subgraph PerceptionLayer["Perception / Decision Layer"]
-    CAM["Camera Source\n(USB / RTSP / Synthetic)"]
-    DET["Detector"]
-    RISK["Risk Evaluator"]
-    WD["Watchdog / Failsafe"]
-    CAM --> DET
-    DET --> RISK
-    CAM --> WD
-    RISK --> WD
+CAM["Camera Source<br/>(Synthetic / USB)"]
+DET["Detector"]
+RISK["Risk Evaluator"]
+WD["Watchdog / Failsafe"]
+HUD["Debug HUD / Browser Monitoring"]
+CAM --> DET
+DET --> RISK
+CAM --> WD
+RISK --> WD
+RISK --> HUD
+CAM --> HUD
+DET --> HUD
 end
 
 subgraph ControlLayer["Command / Control Layer"]
-    TELEOP["teleop_diff_thruster_node"]
-    STUB["auto_controller_stub_node"]
-    MUX["command_mux_node"]
-    LIM["actuator_safety_limiter_node"]
-    BR["mavros_rc_override_bridge_node"]
-
-    TELEOP -->|/seano/manual/left_cmd,right_cmd| MUX
-    STUB -->|/seano/auto/left_cmd,right_cmd| MUX
-    MUX -->|/seano/selected/left_cmd,right_cmd| LIM
-    LIM -->|/seano/left_cmd,right_cmd| BR
-    BR -->|/mavros/rc/override| FCU
+TELEOP["teleop_diff_thruster_node"]
+AUTO["auto_controller_stub_node"]
+MUX["command_mux_node"]
+LIM["actuator_safety_limiter_node"]
+BR["mavros_rc_override_bridge_node"]
+TELEOP --> MUX
+AUTO --> MUX
+MUX --> LIM
+LIM --> BR
 end
 
 subgraph ModeLayer["Mode / State Layer"]
-    MM["mission_mode_manager_node"]
-    STATE["/ca/mode_manager_state"]
-    EVT["/ca/mode_manager_event"]
-    MM --> STATE
-    MM --> EVT
+MM["mission_mode_manager_node"]
+STATE["/ca/mode_manager_state"]
+EVT["/ca/mode_manager_event"]
+MM --> STATE
+MM --> EVT
 end
 
-RISK -->|/ca/command_safe| STUB
-WD -->|/ca/failsafe_active| STUB
+subgraph EvalLayer["Evaluation Layer"]
+BAG["rosbag"]
+MET["Phase 6 metrics scripts"]
+BAG --> MET
+end
+
+MP --> SITL
+MP --> HWFCU
+
+SITL -->|/mavros/state| MM
+HWFCU -->|/mavros/state| MM
+
+RISK -->|/ca/command_safe| AUTO
+WD -->|/ca/failsafe_active| AUTO
 WD -->|/ca/failsafe_active| LIM
-FCU -->|/mavros/state| MM
-STUB -->|/seano/rc_override_enable| MM
 WD -->|/ca/failsafe_active| MM
-MM -->|SetMode| FCU
+
+AUTO -->|/seano/rc_override_enable| MM
+BR -->|/mavros/rc/override| SITL
+BR -->|/mavros/rc/override| HWFCU
+
+STATE --> BAG
+EVT --> BAG
+RISK --> BAG
+WD --> BAG
 ````
 
 ---
 
-## 4. Prinsip Integrasi Mission
+## 5. Prinsip Integrasi Mission
 
 Prinsip integrasi yang dipakai adalah:
 
 * autopilot tetap menjalankan **mission waypoint** dalam mode normal,
-* sistem collision avoidance hanya melakukan **takeover sementara**,
+* collision avoidance hanya melakukan **takeover sementara**,
 * takeover dilakukan melalui:
 
-  * `RC override`
-  * perpindahan mode ke `MANUAL` saat avoidance / failsafe,
-* setelah aman, override dilepas,
-* mode dipulihkan ke mission target,
-* sistem masuk `REJOIN`,
-* setelah stabil, state kembali `MISSION`.
+  * RC override,
+  * perpindahan mode ke mode avoid/failsafe yang aman,
+* setelah aman:
 
-Dengan pola ini, arsitektur yang dipakai adalah:
+  * override dilepas,
+  * mode mission dipulihkan,
+  * sistem masuk `REJOIN`,
+  * setelah stabil sistem kembali ke `MISSION`.
 
-**MISSION -> AVOID -> REJOIN -> MISSION**
+Dengan pola ini, arsitektur aktif dibaca sebagai:
+
+```text
+MISSION -> AVOID -> REJOIN -> MISSION
+```
 
 dan saat kondisi tidak aman dari sisi sistem:
 
-**MISSION / AVOID -> FAILSAFE**
+```text
+MISSION / AVOID / REJOIN -> FAILSAFE
+```
 
 ---
 
-## 5. State Machine Resmi
+## 6. State Machine Resmi
 
 ```mermaid
 stateDiagram-v2
@@ -150,38 +230,111 @@ stateDiagram-v2
     FAILSAFE --> AVOID: failsafe cleared but takeover still on
 ```
 
-Makna tiap state:
+### Makna tiap state
 
-### `MISSION`
+#### `MISSION`
 
 * autopilot menjalankan mission normal
 * mode target umumnya `AUTO`
 * RC override tidak aktif
 
-### `AVOID`
+#### `AVOID`
 
 * collision avoidance takeover aktif
 * RC override aktif
-* mode target umumnya `MANUAL`
+* mode target avoidance aktif
+* kapal keluar dari jalur nominal untuk menghindar
 
-### `REJOIN`
+#### `REJOIN`
 
 * takeover sudah dilepas
 * sistem sedang mengembalikan mode mission dan menunggu stabil
 * mode target umumnya `AUTO`
-* state ini dipakai agar “kembali ke mission” bisa diukur, bukan lompat langsung ke `MISSION`
+* state ini dipakai agar “kembali ke mission” bisa diamati dan diukur
 
-### `FAILSAFE`
+#### `FAILSAFE`
 
 * perception / sistem dianggap tidak aman
-* mode target aman, umumnya `MANUAL`
-* output aktuasi dibatasi oleh limiter / kebijakan aman
+* mode target aman diaktifkan
+* limiter / watchdog menegakkan perilaku aman
+* command avoidance normal bisa ditahan atau diganti policy aman
 
 ---
 
-## 6. Jalur Aktuasi Inti
+## 7. Layer dan Tanggung Jawab
 
-Arsitektur aktuasi aktif adalah:
+## 7.1 Mission / Autopilot Layer
+
+Komponen:
+
+* Mission Planner
+* ArduPilot SITL
+* CUAV X7+ / ArduPilot hardware
+
+Tanggung jawab:
+
+* memegang waypoint mission,
+* menjaga navigasi utama,
+* menyediakan state autopilot ke ROS melalui MAVROS.
+
+Catatan:
+
+* layer ini tetap menjadi “pengendali utama” jalur mission,
+* sistem collision avoidance hanya menjadi **safety layer** di atasnya.
+
+---
+
+## 7.2 Perception / Decision Layer
+
+Komponen yang dapat aktif:
+
+* `camera_node`
+* `detector_node`
+* `waterline_horizon_node`
+* `false_positive_guard_node`
+* `multi_target_fusion_node`
+* `vision_quality_node`
+* `frame_freeze_detector_node`
+* `risk_evaluator_node`
+* `watchdog_failsafe_node`
+
+Tanggung jawab:
+
+* memperoleh image,
+* mendeteksi obstacle,
+* menyaring / menggabungkan detections bila perlu,
+* menilai kualitas persepsi,
+* mendeteksi freeze / stale,
+* menghitung risk,
+* menentukan command collision avoidance yang aman,
+* mengeluarkan status failsafe bila perception dianggap tidak sehat.
+
+Catatan:
+
+* tidak semua node perception harus aktif di setiap mode uji,
+* simulasi ringan biasanya memakai subset yang lebih kecil,
+* hardware bench bisa menyalakan jalur yang lebih lengkap sesuai kebutuhan.
+
+---
+
+## 7.3 Command / Control Layer
+
+Komponen:
+
+* `teleop_diff_thruster_node`
+* `auto_controller_stub_node`
+* `command_mux_node`
+* `actuator_safety_limiter_node`
+* `mavros_rc_override_bridge_node`
+
+Tanggung jawab:
+
+* menerima command manual dan auto,
+* memilih sumber command,
+* membatasi output secara aman,
+* menerjemahkan `left/right` ke RC override PWM.
+
+Jalur aktuasi inti:
 
 ```text
 manual/auto command
@@ -192,57 +345,96 @@ manual/auto command
 -> ArduPilot
 ```
 
-Rinciannya:
+---
 
-1. **manual command**
+## 7.4 Mode / State Layer
 
-   * berasal dari `teleop_diff_thruster_node`
-   * publish:
+Komponen:
 
-     * `/seano/manual/left_cmd`
-     * `/seano/manual/right_cmd`
+* `mission_mode_manager_node`
 
-2. **auto command**
+Input utama:
 
-   * berasal dari `auto_controller_stub_node`
-   * publish:
+* `/mavros/state`
+* `/seano/rc_override_enable`
+* `/ca/failsafe_active`
 
-     * `/seano/auto/left_cmd`
-     * `/seano/auto/right_cmd`
+Output utama:
 
-3. **selection**
+* `/ca/mode_manager_state`
+* `/ca/mode_manager_event`
 
-   * dilakukan oleh `command_mux_node`
-   * memilih jalur manual atau auto berdasarkan `/seano/auto_enable`
+Tanggung jawab:
 
-4. **safety**
+* mengelola state `MISSION / AVOID / REJOIN / FAILSAFE`,
+* memutuskan target mode autopilot,
+* memulihkan mode mission setelah release,
+* memastikan kondisi “state = MISSION tapi mode FCU masih MANUAL” tidak dibiarkan terlalu lama.
 
-   * dilakukan oleh `actuator_safety_limiter_node`
-   * menangani:
+Catatan:
 
-     * stale command
-     * failsafe input
-     * clamp output
-     * safe-stop policy
-
-5. **bridge**
-
-   * `mavros_rc_override_bridge_node`
-   * mengubah `left/right` menjadi RC override PWM
+* layer ini penting bukan hanya untuk kontrol,
+* tapi juga untuk **evidence generation** dan interpretasi hasil uji.
 
 ---
 
-## 7. Node dan Tanggung Jawab
+## 7.5 Monitoring Layer
 
-## 7.1 `teleop_diff_thruster_node`
+Komponen monitoring aktif:
+
+* `/seano/camera/image_raw_reliable`
+* `/camera/image_annotated`
+* `/ca/debug_image`
+* `web_video_server`
+* browser monitoring pada laptop/operator
+
+Tanggung jawab:
+
+* menampilkan apa yang dilihat kamera,
+* menampilkan apa yang dideteksi AI,
+* menampilkan HUD keputusan sistem,
+* membantu operator mendiagnosis kegagalan:
+
+  * perception lost,
+  * command aneh,
+  * risk tidak berubah,
+  * annotated tidak muncul,
+  * HUD tidak sinkron.
+
+Ini adalah layer yang menjadi penghubung utama antara runtime di Jetson dan observasi manusia saat bench maupun uji air.
+
+---
+
+## 7.6 Evaluation Layer
+
+Komponen:
+
+* rosbag
+* `phase6_metrics_from_bag.py`
+* `phase6_collect_results.py`
+* helper script lain untuk pengumpulan hasil
+
+Tanggung jawab:
+
+* merekam event runtime,
+* mengekstrak metrik,
+* membandingkan antar-run,
+* membangun bukti kuantitatif untuk TA.
+
+Catatan:
+
+* layer ini sangat kuat di simulasi,
+* namun juga tetap relevan untuk hardware jika rosbag direkam saat uji nyata.
+
+---
+
+## 8. Node dan Tanggung Jawab Inti
+
+### `teleop_diff_thruster_node`
 
 Tujuan:
 
-* manual control untuk validasi low-level
-
-Input:
-
-* keyboard / teleop
+* manual control / low-level validation
 
 Output:
 
@@ -251,12 +443,12 @@ Output:
 
 ---
 
-## 7.2 `auto_controller_stub_node`
+### `auto_controller_stub_node`
 
 Tujuan:
 
-* takeover logic sementara untuk simulasi / integrasi
 * membaca command decision lalu menerjemahkannya ke `left/right`
+* menjadi jembatan antara hazard command dan takeover control
 
 Input:
 
@@ -270,13 +462,9 @@ Output:
 * `/seano/auto_enable`
 * `/seano/rc_override_enable`
 
-Peran arsitektural:
-
-* node ini adalah jembatan antara hazard command dan takeover control
-
 ---
 
-## 7.3 `command_mux_node`
+### `command_mux_node`
 
 Tujuan:
 
@@ -300,7 +488,7 @@ Output:
 
 ---
 
-## 7.4 `actuator_safety_limiter_node`
+### `actuator_safety_limiter_node`
 
 Tujuan:
 
@@ -317,16 +505,16 @@ Output:
 * `/seano/left_cmd`
 * `/seano/right_cmd`
 
-Tanggung jawab utama:
+Tanggung jawab:
 
-* timeout command
+* stale handling
+* timeout handling
 * safe-stop policy
 * clamp output
-* stale handling
 
 ---
 
-## 7.5 `mavros_rc_override_bridge_node`
+### `mavros_rc_override_bridge_node`
 
 Tujuan:
 
@@ -344,187 +532,228 @@ Output:
 
 Peran:
 
-* menjadi jembatan aktuasi ROS 2 -> MAVROS -> ArduPilot
+* jembatan aktuasi ROS 2 -> MAVROS -> ArduPilot
 
 ---
 
-## 7.6 `mission_mode_manager_node`
+### `mission_mode_manager_node`
 
 Tujuan:
 
 * mengelola mode autopilot dan state machine tingkat tinggi
 
-Input:
-
-* `/mavros/state`
-* `/seano/rc_override_enable`
-* `/ca/failsafe_active`
-
-Output:
-
-* `/ca/mode_manager_state`
-* `/ca/mode_manager_event`
-
-Action:
-
-* `/mavros/set_mode`
-
-Peran utama:
+Peran:
 
 * `MISSION` -> target mission mode
 * `AVOID` -> target avoid mode
 * `FAILSAFE` -> target failsafe mode
 * `REJOIN` -> restore mode mission dan tunggu stabil
 
-Tambahan penting:
-
-* node ini juga memakai enforcement periodik agar kasus
-  **MISSION tetapi mode autopilot masih MANUAL**
-  bisa dipulihkan otomatis
-
 ---
 
-## 7.7 Perception Nodes
-
-Lapisan perception dapat berisi:
-
-* `camera_node`
-* `detector_node`
-* `waterline_horizon_node`
-* `false_positive_guard_node`
-* `multi_target_fusion_node`
-* `vision_quality_node`
-* `frame_freeze_detector_node`
-* `risk_evaluator_node`
-* `watchdog_failsafe_node`
-
-Tidak semua node perception harus aktif pada setiap mode uji.
-
----
-
-## 8. Runtime Profiles
-
-Arsitektur runtime sekarang dibedakan menjadi beberapa mode uji.
-
-## 8.1 Case A — Mode Manager Only
+### `camera_node`
 
 Tujuan:
 
-* validasi state machine tanpa perception
-* validasi `MISSION -> AVOID -> REJOIN -> MISSION`
+* menyediakan raw image dari source aktif
 
-Aktif:
+Source yang mungkin:
 
-* mode manager
-* mux
-* limiter
-* bridge
-
-Nonaktif:
-
-* CA pipeline
-* takeover manager
+* synthetic
+* USB
+* RTSP / legacy path bench tertentu
 
 ---
 
-## 8.2 Case B — Takeover Logic Only
+### `detector_node`
 
 Tujuan:
 
-* validasi hazard -> takeover -> release
-
-Aktif:
-
-* takeover manager
-* mode manager
-* mux
-* limiter
-* bridge
-
-Nonaktif:
-
-* full CA perception chain
+* membaca image,
+* menjalankan detector AI,
+* mengeluarkan detections,
+* menghasilkan annotated image.
 
 ---
 
-## 8.3 Case C — Full Integration (Synthetic Camera)
+### `risk_evaluator_node`
 
 Tujuan:
 
-* validasi integrasi penuh tanpa bergantung pada kamera hardware
+* membaca detections,
+* menghitung risk,
+* menentukan command avoidance,
+* menghasilkan debug HUD.
 
-Default yang dipakai:
+Output penting:
 
-* **synthetic_light**
+* `/ca/risk`
+* `/ca/command`
+* `/ca/debug_image`
 
-Karakteristik:
+---
 
-* synthetic / dummy camera aktif
-* detector aktif
-* risk aktif
-* lebih ringan untuk WSL
+### `watchdog_failsafe_node`
 
-Varian:
+Tujuan:
+
+* memonitor kesehatan jalur persepsi,
+* mendeteksi kondisi lost/stale/freeze,
+* mengaktifkan failsafe jika perception tidak dapat dipercaya.
+
+Output penting:
+
+* `/ca/failsafe_active`
+* `/ca/watchdog_status`
+
+---
+
+## 9. Runtime Profiles Aktif
+
+Arsitektur runtime saat ini dibedakan menjadi beberapa mode uji.
+
+### 9.1 Simulation runtime
+
+Fokus utama:
+
+* `phase5_mission_avoid_integration.launch.py`
+
+Mode yang umum:
+
+* Case A — mode manager only
+* Case B — takeover logic only
+* Case C — full integration (synthetic camera)
+
+Profile praktis:
 
 * `synthetic_light`
 * `synthetic_watchdog`
 * `full`
 
+Tujuan:
+
+* menguji logika tanpa bergantung pada hardware nyata.
+
 ---
 
-## 9. Synthetic Camera Path
+### 9.2 Hardware runtime
 
-Untuk simulasi ringan, sumber kamera dapat berupa **synthetic camera**.
+Fokus utama:
 
-Tujuannya:
+* `phase7_cuav_usb_hardware.launch.py`
 
-* menghindari ketergantungan pada kamera USB/hardware saat logika inti belum final
-* mengurangi beban uji di WSL
-* menjaga pipeline perception tetap punya input gambar
+Tujuan:
 
-Konsekuensi:
+* menguji integrasi nyata:
 
-* Case C dapat tetap berjalan walaupun kamera hardware tidak aktif
-* tahap migrasi ke kamera USB dilakukan setelah logic control / state / metrics stabil
+  * FCU,
+  * kamera,
+  * detector,
+  * risk,
+  * watchdog,
+  * control,
+  * monitoring.
+
+Hardware baseline adalah jalur yang dipakai untuk:
+
+* dockside bench,
+* AUTO without obstacle,
+* obstacle run,
+* field-test preparation.
 
 ---
 
 ## 10. Topic Reference Inti
 
-| Topic                       | Type                     | Peran                             |
-| --------------------------- | ------------------------ | --------------------------------- |
-| `/seano/manual/left_cmd`    | std_msgs/Float32         | manual left command               |
-| `/seano/manual/right_cmd`   | std_msgs/Float32         | manual right command              |
-| `/seano/auto/left_cmd`      | std_msgs/Float32         | auto left command                 |
-| `/seano/auto/right_cmd`     | std_msgs/Float32         | auto right command                |
-| `/seano/auto_enable`        | std_msgs/Bool            | memilih jalur auto di mux         |
-| `/seano/selected/left_cmd`  | std_msgs/Float32         | output mux                        |
-| `/seano/selected/right_cmd` | std_msgs/Float32         | output mux                        |
-| `/ca/failsafe_active`       | std_msgs/Bool            | status failsafe                   |
-| `/seano/left_cmd`           | std_msgs/Float32         | final left command                |
-| `/seano/right_cmd`          | std_msgs/Float32         | final right command               |
-| `/seano/rc_override_enable` | std_msgs/Bool            | mengaktifkan RC override          |
-| `/mavros/rc/override`       | mavros_msgs/OverrideRCIn | PWM override ke FCU               |
-| `/mavros/state`             | mavros_msgs/State        | mode / armed / connection state   |
-| `/ca/command_safe`          | std_msgs/String          | command hazard / decision output  |
-| `/ca/mode_manager_state`    | std_msgs/String          | `MISSION/AVOID/REJOIN/FAILSAFE`   |
-| `/ca/mode_manager_event`    | std_msgs/String          | event JSON untuk audit dan metrik |
+| Topic                              | Peran                               |
+| ---------------------------------- | ----------------------------------- |
+| `/seano/manual/left_cmd`           | manual left command                 |
+| `/seano/manual/right_cmd`          | manual right command                |
+| `/seano/auto/left_cmd`             | auto left command                   |
+| `/seano/auto/right_cmd`            | auto right command                  |
+| `/seano/auto_enable`               | memilih jalur auto di mux           |
+| `/seano/selected/left_cmd`         | output mux                          |
+| `/seano/selected/right_cmd`        | output mux                          |
+| `/seano/left_cmd`                  | final left command                  |
+| `/seano/right_cmd`                 | final right command                 |
+| `/seano/rc_override_enable`        | mengaktifkan RC override            |
+| `/mavros/rc/override`              | RC override ke FCU                  |
+| `/mavros/state`                    | mode / armed / connection state     |
+| `/ca/command_safe`                 | command decision untuk takeover     |
+| `/ca/risk`                         | nilai risk                          |
+| `/ca/command`                      | output command CA                   |
+| `/ca/mode_manager_state`           | state mission/avoid/rejoin/failsafe |
+| `/ca/mode_manager_event`           | event manager                       |
+| `/ca/failsafe_active`              | status failsafe                     |
+| `/ca/watchdog_status`              | status watchdog                     |
+| `/seano/camera/image_raw_reliable` | raw camera utama                    |
+| `/camera/image_annotated`          | image dengan overlay detections     |
+| `/ca/debug_image`                  | HUD / decision overlay              |
 
 ---
 
-## 11. Phase 6 Metrics Architecture
+## 11. Arsitektur Simulasi
 
-Arsitektur ini sekarang mendukung evaluasi berbasis rosbag.
+Arsitektur simulasi dianggap tervalidasi bila:
 
-Metrik utama yang diambil:
+1. `/mavros/state connected: true`
+2. state manager menunjukkan:
 
-1. **takeover segments**
-2. **takeover duration**
-3. **reaction time**
-4. **release time**
-5. **rejoin time**
-6. **failsafe rises**
-7. **mission-mode mismatch ratio**
+   * `MISSION -> AVOID -> REJOIN -> MISSION`
+3. event manager menunjukkan:
+
+   * `TAKEOVER_ON`
+   * `TAKEOVER_OFF`
+   * `REJOIN_START`
+   * `REJOIN_DONE`
+4. rosbag dapat direkam dengan baik
+5. extractor metrics menghasilkan:
+
+   * `reaction_time_s`
+   * `release_time_s`
+   * `rejoin_time_s`
+   * `mode_mismatch.mismatch_ratio`
+
+Simulasi adalah baseline paling kuat untuk evidence kuantitatif.
+
+---
+
+## 12. Arsitektur Hardware
+
+Arsitektur hardware dianggap sehat bila:
+
+1. FCU connect stabil melalui MAVROS
+2. kamera USB menghasilkan raw image stabil
+3. detector menghasilkan annotated image dan detections
+4. risk evaluator aktif
+5. watchdog aktif tetapi tidak salah-trigger terus-menerus
+6. browser monitoring raw / annotated / HUD dapat dipakai
+7. command chain aktif dari risk sampai RC override
+8. AUTO mission dapat berjalan
+9. obstacle run dapat menunjukkan:
+
+   * detect
+   * avoid
+   * release
+   * rejoin
+
+Hardware baseline adalah jembatan menuju pembuktian collision avoidance nyata di air.
+
+---
+
+## 13. Phase 6 Metrics Architecture
+
+Layer evaluasi saat ini mendukung pengukuran berbasis rosbag.
+
+Metrik utama:
+
+1. takeover segments
+2. takeover duration
+3. reaction time
+4. release time
+5. rejoin time
+6. failsafe rises
+7. mission-mode mismatch ratio
 
 Sumber utama:
 
@@ -535,71 +764,66 @@ Sumber utama:
 * `/ca/mode_manager_state`
 * `/ca/mode_manager_event`
 
-Artinya, state machine bukan hanya untuk kontrol, tetapi juga untuk **evidence generation**.
+Makna penting:
+
+* state machine bukan hanya untuk kontrol,
+* tetapi juga untuk **evidence generation**.
 
 ---
 
-## 12. Batasan Saat Ini
+## 14. Batasan Saat Ini
 
 Arsitektur aktif saat ini sudah mendukung:
 
-* takeover avoidance
-* release
-* rejoin
-* metrics extraction
+* temporary avoidance takeover,
+* release,
+* rejoin,
+* simulation metrics extraction,
+* hardware bench integration,
+* browser monitoring untuk hardware.
 
 Namun masih ada batasan:
 
-* return-to-path masih memakai pendekatan **mission resume / mode restore**
-* belum ada path planner rejoin eksplisit yang menghitung lintasan baru secara mandiri
-* perception hardware final belum menjadi baseline utama; synthetic camera masih dipakai untuk pengujian ringan
+* return-to-path masih berorientasi **mission resume / mode restore**, belum full path replanning,
+* keberhasilan hardware sangat tergantung kualitas detection,
+* perception hardware masih sensitif terhadap cahaya, kontras obstacle, dan kestabilan stream,
+* pembuktian field full end-to-end masih harus dijaga dengan skenario yang sederhana dan aman.
 
 ---
 
-## 13. Arah Pengembangan Berikutnya
+## 15. Arah Pengembangan Berikutnya
 
-Tahap berikut yang sesuai dengan arsitektur ini:
+Tahap berikut yang paling sesuai dengan arsitektur ini:
 
-1. standardisasi skenario uji Phase 6
-2. pengumpulan beberapa rosbag uji hazard / rejoin / failsafe
-3. pembandingan metrik antar-run
-4. migrasi dari synthetic camera ke USB camera
-5. porting ke Jetson / FCU hardware target
-6. uji lapangan terkontrol
+1. membakukan baseline simulasi sebagai evidence kuantitatif utama,
+2. memperkuat baseline hardware dengan `phase7`,
+3. menjalankan dockside test yang repeatable,
+4. membatasi field-test ke skenario obstacle sederhana dulu,
+5. mengumpulkan evidence:
 
----
-
-## 14. Validasi Arsitektur
-
-Arsitektur dianggap tervalidasi bila:
-
-1. `/mavros/state connected: true`
-2. mode manager menunjukkan:
-
-   * `MISSION -> AVOID -> REJOIN -> MISSION`
-3. event manager menunjukkan:
-
-   * `TAKEOVER_ON`
-   * `TAKEOVER_OFF`
-   * `REJOIN_START`
-   * `REJOIN_DONE`
-4. extractor metrics menghasilkan:
-
-   * `reaction_time_s`
-   * `release_time_s`
-   * `rejoin_time_s`
-   * `mode_mismatch.mismatch_ratio` rendah / nol
+   * video monitoring,
+   * screenshot HUD,
+   * rosbag,
+   * catatan hasil run,
+6. setelah baseline stabil, baru audit launch lama dan refactor struktur lebih jauh.
 
 ---
 
-## 15. Ringkasan
+## 16. Ringkasan
 
-Arsitektur aktif SEANO sekarang dapat dibaca sebagai:
+Arsitektur aktif SEANO sekarang harus dibaca sebagai:
 
 * autopilot tetap menjalankan mission,
-* collision avoidance mengambil alih sementara,
-* command internal memakai `left/right`,
-* safety limiter menjaga aktuasi tetap aman,
-* mode manager mengelola `MISSION/AVOID/REJOIN/FAILSAFE`,
-* synthetic camera mendukung pengujian ringan,
-* rosbag metrics menyediakan bukti kuantitatif untuk Phase 6.
+* collision avoidance mengambil alih sementara saat berbahaya,
+* kontrol internal memakai `left/right`,
+* limiter menjaga aktuasi tetap aman,
+* mode manager mengelola `MISSION / AVOID / REJOIN / FAILSAFE`,
+* simulasi dipusatkan di `phase5`,
+* hardware dipusatkan di `phase7`,
+* monitoring browser menjadi alat diagnosis utama pada hardware,
+* rosbag metrics tetap menjadi sumber evidence kuantitatif utama.
+
+Dengan demikian, repository ini tidak lagi hanya “simulasi Phase 5/6”, tetapi sudah menjadi sistem dengan dua baseline aktif:
+
+* **simulation baseline**
+* **hardware baseline**
