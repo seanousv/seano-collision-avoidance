@@ -1,96 +1,92 @@
-# Summary
-<!-- Explain what this PR changes and why. Keep it concise. -->
+## Summary
+Describe the change clearly in 1-3 sentences.
 
-## What changed?
--
+## Related issue
+- Closes #
+- Related to #
 
-## Why?
--
+## Target baseline
+- [ ] Simulation baseline (SITL + MAVROS + Mission Planner)
+- [ ] Hardware baseline (Jetson + CUAV X7+ + USB camera)
+- [ ] Repository / CI / documentation only
 
----
+## Type of change
+- [ ] Bug fix
+- [ ] New feature
+- [ ] Refactor
+- [ ] Documentation update
+- [ ] CI / tooling update
+- [ ] Launch / integration update
 
-# Type of change
-<!-- Check ONE primary type. -->
-- [ ] feat (new feature)
-- [ ] fix (bug fix)
-- [ ] refactor (no behavior change)
-- [ ] docs (documentation only)
-- [ ] test (tests only)
-- [ ] chore (tooling/repo hygiene)
+## Scope
+What is included in this PR?
+What is intentionally out of scope?
 
----
+## Files or components changed
+- Node(s):
+- Launch file(s):
+- Topic/interface(s):
+- Script/tooling:
+- Documentation:
 
-# Scope / affected areas
-<!-- Check all that apply. -->
-- [ ] Actuation / Control (teleop, mux, limiter)
-- [ ] MAVROS / MAVLink bridge (RC override, FCU link)
-- [ ] Simulation (SITL, Mission Planner)
-- [ ] Perception (camera input)
-- [ ] Detection / Tracking
-- [ ] Risk / Decision logic
-- [ ] Launch / Config
-- [ ] Documentation
+## Validation performed
+Describe exactly how this was tested.
 
----
+### Simulation validation
+- [ ] Not applicable
+- [ ] Build completed
+- [ ] Launch completed
+- [ ] Mission flow checked
+- [ ] Avoid / rejoin behavior checked
+- [ ] Logs reviewed
 
-# How to test
-<!-- Provide exact commands used. If not tested, explain why. -->
-
-## ROS 2 build
+Command(s) used:
 ```bash
-cd seano_ca_ws
-source /opt/ros/humble/setup.bash
-colcon build --symlink-install
+# paste commands here
 ````
 
-## Runtime / demo (if applicable)
+### Hardware bench validation
+
+* [ ] Not applicable
+* [ ] Build completed on target device
+* [ ] Camera stream verified
+* [ ] Detection pipeline verified
+* [ ] Risk evaluator verified
+* [ ] Watchdog / safety behavior checked
+* [ ] Browser monitoring verified
+
+Command(s) used:
 
 ```bash
-source seano_ca_ws/install/setup.bash
-ros2 launch seano_vision run_auto_stack.launch.py
+# paste commands here
 ```
 
 ## Evidence
 
-<!-- Paste output snippets, logs, or attach screenshots if relevant. -->
+* Screenshot / recording:
+* Log excerpt:
+* Topic snapshot:
+* Metrics / result summary:
+* Related document:
 
-*
+## Documentation update
 
----
+* [ ] README updated
+* [ ] RUNBOOK updated
+* [ ] ARCHITECTURE updated
+* [ ] LAUNCH_STATUS_MAP updated
+* [ ] HARDWARE_BENCH_RESULTS updated
+* [ ] No documentation update needed
 
-# Expected behavior
+## Risk and rollback
 
-<!-- State what “correct” looks like so reviewers can validate quickly. -->
+What could break because of this change?
+How can it be reverted safely if needed?
 
-*
+## Checklist
 
----
-
-# Checklist (required)
-
-* [ ] PR is focused (single feature/fix)
-* [ ] `colcon build` passes locally
-* [ ] No colcon artifacts committed (`build/`, `install/`, `log/`)
-* [ ] No venv/cache committed (`.venv*`, `__pycache__`, `.cache`)
-* [ ] Interface changes (topics/params) are documented
-* [ ] No duplicate publishers introduced on critical topics (`ros2 topic info -v`)
-* [ ] If actuation is affected: `/mavros/state` is `connected: true` and RC override publishes
-
----
-
-# Breaking changes
-
-<!-- If this PR changes topic names, message types, parameters, or launch behavior. -->
-
-* [ ] None
-* [ ] Yes (describe below)
-
-## If yes, migration steps:
-
----
-
-# Notes for reviewers
-
-*
-
-````
+* [ ] I tested the change before opening this PR
+* [ ] I kept the scope focused
+* [ ] I updated affected documentation
+* [ ] I did not include unrelated formatting-only edits
+* [ ] I reviewed logs, warnings, or obvious runtime regressions
