@@ -3,23 +3,28 @@
 [![Dependabot](https://img.shields.io/badge/dependabot-enabled-brightgreen)](https://github.com/seanousv/seano-collision-avoidance/network/updates)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-# SEANO Collision Avoidance (ROS 2 Humble) — USV Differential Thruster
 
-Camera-based collision avoidance module for the SEANO USV.
-Developed on **ROS 2 Humble**, validated first in **ArduPilot SITL (ArduRover rover-skid)**, and designed for deployment to **Jetson Orin Nano + CUAV X7+**.
+# SEANO Collision Avoidance (ROS 2 Humble)
+## Camera-based collision avoidance for USV SEANO BIMA30
 
-## Active baseline status
+Camera-based collision avoidance module for the SEANO USV, developed on **ROS 2 Humble**, validated in **ArduPilot SITL (ArduRover rover-skid)**, and prepared for hardware deployment on **Jetson Orin Nano + CUAV X7+ + USB camera**.
 
-Current active baseline of this repository:
+---
 
+## 1. Current active project baseline
+
+The repository now has **two active baselines**:
+
+### A. Active simulation baseline
+Used for repeatable integration testing and thesis evidence extraction.
+
+Current status:
 - **Phase 0** — baseline and reproducible setup: completed
 - **Phase 1** — differential-thrust control foundation: completed
 - **Phase 5** — mission / avoid / rejoin integration: functional
 - **Phase 6** — rosbag-based metrics extraction: active
 
-The current runtime baseline is no longer only “control stack bring-up”.
-It now supports:
-
+Simulation baseline currently supports:
 - waypoint mission on autopilot
 - temporary avoidance takeover
 - release back to mission
@@ -27,24 +32,30 @@ It now supports:
 - synthetic-camera-based integration testing
 - quantitative metrics extraction from rosbag
 
+### B. Active hardware bench baseline
+Used for Jetson + CUAV X7+ + USB camera bench integration and field-test preparation.
+
+Current status:
+- MAVROS connection to CUAV X7+ validated
+- USB camera source validated on Jetson
+- detector path active
+- risk evaluator active
+- watchdog active
+- browser-based monitoring active
+- debug HUD `/ca/debug_image` active
+- hardware orchestration available through Phase 7
+
+Hardware bench baseline currently supports:
+- Jetson runtime
+- CUAV X7+ autopilot link
+- USB camera perception source
+- detector -> risk -> watchdog chain
+- browser monitoring for raw / annotated / HUD streams
+- Phase 7 integrated launch for hardware bring-up
+
 ---
 
-## Key vehicle constraint (critical for control design)
-
-SEANO uses **differential thrusters** (left–right) without a rudder.
-
-Therefore, the preferred internal motion command format is:
-
-- `left_cmd`
-- `right_cmd`
-
-not rudder-based control.
-
-This decision is used consistently across the control architecture.
-
----
-
-## What this repository does
+## 2. Mission behavior target
 
 The intended mission behavior is:
 
@@ -56,7 +67,7 @@ The intended mission behavior is:
 6. System enters `REJOIN`.
 7. Vehicle returns to mission-following behavior and continues to the final waypoint.
 
-The current implementation uses the following high-level state logic:
+The current high-level state logic is:
 
 - `MISSION`
 - `AVOID`
@@ -65,75 +76,136 @@ The current implementation uses the following high-level state logic:
 
 ---
 
-## Documentation
+## 3. Critical vehicle constraint
+
+SEANO uses **differential thrusters** (left-right) and does **not** use a rudder.
+
+Therefore, the preferred internal motion command format is:
+
+- `left_cmd`
+- `right_cmd`
+
+not rudder-based control.
+
+This design choice is applied consistently across the control stack.
+
+---
+
+## 4. What this repository contains
+
+This repository contains the collision-avoidance stack for:
+
+- camera input
+- AI-based object detection
+- risk evaluation
+- takeover / release logic
+- failsafe and watchdog logic
+- mission-mode management
+- MAVROS bridge to ArduPilot
+- simulation evaluation workflow
+- hardware bench integration workflow
+
+---
+
+## 5. Active launch map
+
+### Main simulation launch
+- `phase5_mission_avoid_integration.launch.py`
+- purpose: SITL mission -> avoid -> rejoin -> mission
+
+### Main hardware launch
+- `phase7_cuav_usb_hardware.launch.py`
+- purpose: Jetson + CUAV X7+ + USB camera + detector + risk + watchdog + control integration
+
+### Bench / debug launches
+- `phase2_camera_usb_test.launch.py`
+- `demo_detect.launch.py`
+- `demo_risk.launch.py`
+- `demo_full_ca.launch.py`
+
+Rule of thumb:
+- **SITL main** -> `phase5_mission_avoid_integration.launch.py`
+- **Hardware main** -> `phase7_cuav_usb_hardware.launch.py`
+- **Detector check** -> `demo_detect.launch.py`
+- **Risk check** -> `demo_risk.launch.py`
+
+---
+
+## 6. Repository structure
+````markdown
+```text
+seano-collision-avoidance/
+├── .vscode/                           # local workspace settings
+├── docs/                              # documentation and operational references
+├── seano_ca_ws/                       # ROS 2 workspace (colcon)
+│   └── src/
+│       └── seano_vision/
+│           ├── config/                # runtime configuration
+│           ├── launch/                # ROS 2 launch files
+│           ├── resource/              # ament resources
+│           ├── scripts/               # helper and metrics scripts
+│           ├── seano_vision/          # main ROS nodes
+│           ├── package.xml
+│           ├── setup.cfg
+│           └── setup.py
+├── tools/                             # optional external tools
+├── CHANGELOG.md
+├── CITATION.cff
+├── CODE_OF_CONDUCT.md
+├── CONTRIBUTING.md
+├── LICENSE
+├── README.md
+├── SECURITY.md
+└── SUPPORT.md
+````
+
+---
+
+## 7. Key documents
 
 Primary documents:
 
-- Architecture overview: `docs/ARCHITECTURE.md`
-- Simulation runbook: `docs/RUNBOOK.md`
-- Phase 6 test matrix and results template: `docs/PHASE6_TEST_MATRIX.md`
-- Changelog: `CHANGELOG.md`
-- Contributing: `CONTRIBUTING.md`
-- Security policy: `SECURITY.md`
-- Support: `SUPPORT.md`
-- Citation: `CITATION.cff`
-- Code of conduct: `CODE_OF_CONDUCT.md`
+* `docs/RUNBOOK.md`
+  Main simulation runbook for SITL + Mission Planner + MAVROS + Phase 5 / Phase 6
+
+* `docs/ARCHITECTURE.md`
+  Current architecture overview
+
+* `docs/PHASE6_TEST_MATRIX.md`
+  Test matrix for metrics-oriented simulation runs
+
+* `docs/PHASE6_RESULTS_SUMMARY.md`
+  Phase 6 summary results
+
+* `docs/LAUNCH_STATUS_MAP.md`
+  Quick operational map for active launch files vs bench/debug launches
 
 Recommended reading order:
 
-1. `docs/RUNBOOK.md`
-2. `docs/ARCHITECTURE.md`
-3. `docs/PHASE6_TEST_MATRIX.md`
+1. `docs/LAUNCH_STATUS_MAP.md`
+2. `docs/RUNBOOK.md`
+3. `docs/ARCHITECTURE.md`
+4. `docs/PHASE6_TEST_MATRIX.md`
+5. `docs/PHASE6_RESULTS_SUMMARY.md`
 
 ---
 
-````md
-## Repository structure
+## 8. Current system overview
 
-```text
-seano-collision-avoidance/
-├── seano_ca_ws/                      # ROS 2 workspace (colcon)
-│   └── src/
-│       └── seano_vision/             # main ROS 2 package (ament_python)
-│           ├── seano_vision/         # ROS nodes (Python)
-│           ├── launch/               # launch files
-│           ├── config/               # configuration
-│           ├── resource/             # ament resources
-│           ├── scripts/              # helper / metrics scripts
-│           ├── package.xml
-│           ├── setup.py
-│           └── setup.cfg
-├── docs/                             # architecture, runbook, test matrix
-├── tools/                            # optional external tools
-├── requirements.txt                  # AI deps (WSL-safe; Jetson torch manual)
-├── LICENSE
-└── README.md
-````
-
-Notes:
-
-* `seano_ca_ws/` is the ROS 2 workspace built with `colcon`.
-* `seano_vision/` contains the control, vision, bridge, and metrics nodes/scripts.
-* `tools/` is optional and intended for external tooling.
-* `docs/` contains the current active operational baseline documentation.
-
----
-
-## Current system overview
-
-The active runtime architecture is organized into layers:
+The active runtime architecture is organized into layers.
 
 ### 1. Mission / Autopilot layer
 
-* Mission Planner defines waypoint mission.
-* ArduPilot executes mission in autopilot mode.
+* Mission Planner defines waypoint mission
+* ArduPilot executes mission in autopilot mode
+* CUAV X7+ is the active hardware autopilot target
 
 ### 2. Perception / decision layer
 
-* Camera source (USB / RTSP / synthetic)
-* Detector
-* Risk evaluator
-* Watchdog / failsafe logic
+* camera source (synthetic / USB)
+* detector
+* risk evaluator
+* watchdog / failsafe logic
 
 ### 3. Control layer
 
@@ -153,13 +225,20 @@ The active runtime architecture is organized into layers:
 
 * rosbag recording
 * Phase 6 metrics extraction
-* Phase 6 aggregated result collection
+* result aggregation scripts
+
+### 6. Monitoring layer
+
+* raw image stream
+* annotated image stream
+* debug HUD `/ca/debug_image`
+* browser monitoring via `web_video_server`
 
 ---
 
-## Core runtime pipeline
+## 9. Core runtime pipeline
 
-Main actuation path:
+### Actuation path
 
 ```text
 manual/auto command
@@ -170,19 +249,17 @@ manual/auto command
 -> ArduPilot
 ```
 
-Mission / state path:
+### Mission / state path
 
 ```text
-/mavros/state
-+ /seano/rc_override_enable
-+ /ca/failsafe_active
+/mavros/state + /seano/rc_override_enable + /ca/failsafe_active
 -> mission_mode_manager_node
 -> /ca/mode_manager_state
 -> /ca/mode_manager_event
 -> /mavros/set_mode
 ```
 
-Perception / decision path:
+### Perception / decision path
 
 ```text
 camera
@@ -195,9 +272,9 @@ camera
 
 ---
 
-## Runtime test modes
+## 10. Simulation runtime modes
 
-The current runtime baseline is divided into 3 practical modes.
+The practical simulation baseline is centered on **Phase 5**.
 
 ### Case A — Mode Manager Only
 
@@ -213,7 +290,7 @@ Purpose:
 Purpose:
 
 * validate hazard command -> takeover -> release
-* still lightweight
+* lightweight runtime
 * no full perception/watchdog load
 
 ### Case C — Full Integration (Synthetic Camera)
@@ -221,96 +298,86 @@ Purpose:
 Purpose:
 
 * validate integrated runtime
-* does not depend on hardware camera
+* avoid hardware camera dependency
 * suitable for WSL testing
 
-Default perception runtime profile for Case C:
+Default practical profiles:
 
 * `synthetic_light`
-
-Additional profiles:
-
 * `synthetic_watchdog`
 * `full`
 
 ---
 
-## Why synthetic camera is used now
+## 11. Hardware runtime mode
 
-A synthetic camera path is intentionally used in simulation-first testing because it:
+The practical hardware baseline is centered on **Phase 7**.
 
-* removes dependence on hardware camera during control/state integration
-* reduces runtime load in WSL
-* keeps perception chain testable
-* allows faster iteration before USB camera migration
+### Phase 7 — Full hardware integration
 
-Hardware camera integration remains part of the next-stage migration, not the current simulation baseline.
+Purpose:
+
+* Jetson + CUAV X7+ + USB camera hardware bring-up
+* detector -> risk -> watchdog -> control integration
+* browser-based monitoring
+* field-test preparation
+
+Typical monitoring topics:
+
+* `/seano/camera/image_raw_reliable`
+* `/camera/image_annotated`
+* `/ca/debug_image`
 
 ---
 
-## Prerequisites
+## 12. Prerequisites
 
-### Host
+### Simulation host
 
 * Windows + WSL2 Ubuntu 22.04
-
-### WSL
-
 * ROS 2 Humble
 * MAVROS2
-* OpenCV
-* `cv_bridge`
+* Mission Planner on Windows
+* ArduPilot SITL
 
-### Simulator / GCS
+### Hardware runtime
 
-* ArduPilot SITL (ArduRover rover-skid)
-* Mission Planner (Windows)
+* Jetson Orin Nano
+* ROS 2 Humble
+* CUAV X7+
+* USB camera
+* MAVROS2
+* browser monitoring via `web_video_server`
 
 ---
 
-## Build (ROS 2 workspace)
+## 13. Build workspace
 
-### 1. Clone
+### Clone
 
 ```bash
 git clone https://github.com/seanousv/seano-collision-avoidance.git
 cd seano-collision-avoidance
 ```
 
-### 2. Install minimal dependencies (WSL)
-
-```bash
-sudo apt update
-sudo apt install -y \
-  python3-opencv \
-  ros-humble-cv-bridge \
-  ros-humble-launch \
-  ros-humble-launch-ros \
-  ros-humble-mavros \
-  ros-humble-mavros-msgs \
-  ros-humble-vision-msgs
-```
-
-### 3. Build workspace
+### Build
 
 ```bash
 cd seano_ca_ws
 source /opt/ros/humble/setup.bash
-colcon build --symlink-install
+colcon build --packages-select seano_vision --symlink-install
 source install/setup.bash
 ```
 
-Expected output:
+Expected:
 
-* `colcon build` completes without errors
-* `ros2 pkg list | grep seano_vision` shows `seano_vision`
+* build finishes without errors
+* `seano_vision` is available
+* latest launch and node changes are installed
 
 ---
 
-## Quick start (current active runtime)
-
-Detailed steps are documented in `docs/RUNBOOK.md`.
-Short version:
+## 14. Quick start — simulation
 
 ### Terminal 1 — SITL
 
@@ -324,8 +391,8 @@ sim_vehicle.py -v Rover -f rover-skid --console --map \
 
 ### Mission Planner (Windows)
 
-* Connection type: `UDP`
-* Port: `14550`
+* connection type: `UDP`
+* port: `14550`
 
 ### Terminal 2 — MAVROS
 
@@ -334,64 +401,74 @@ source /opt/ros/humble/setup.bash
 ros2 launch mavros apm.launch fcu_url:=udp://0.0.0.0:14551@127.0.0.1:14551
 ```
 
-### Terminal 3 — Phase 5 integration
-
-#### Case A
+### Terminal 3 — Phase 5
 
 ```bash
-ros2 launch seano_vision phase5_mission_avoid_integration.launch.py \
-  use_ca_pipeline:=false \
-  use_takeover_manager:=false
-```
+cd ~/seano-collision-avoidance/seano_ca_ws
+source /opt/ros/humble/setup.bash
+source install/setup.bash
 
-#### Case B
-
-```bash
-ros2 launch seano_vision phase5_mission_avoid_integration.launch.py \
-  use_ca_pipeline:=false \
-  use_takeover_manager:=true \
-  master_enable_on_start:=true
-```
-
-#### Case C (default)
-
-```bash
 ros2 launch seano_vision phase5_mission_avoid_integration.launch.py \
   use_ca_pipeline:=true \
   use_takeover_manager:=true \
-  master_enable_on_start:=true
+  master_enable_on_start:=true \
+  ca_runtime_profile:=synthetic_watchdog \
+  record:=true \
+  bag_name:=sitl_main_run_01
 ```
 
-Expected baseline behavior:
+Target:
 
-* MAVROS connected
-* state manager transitions work
-* Case C runs using synthetic camera without hardware camera dependency
-
----
-
-## Phase 5 validation target
-
-A valid Phase 5 run should show:
-
-* `/mavros/state connected: true`
-* `/ca/mode_manager_state` transitions:
-
-  * `MISSION -> AVOID -> REJOIN -> MISSION`
-* `/ca/mode_manager_event` contains:
-
-  * `TAKEOVER_ON`
-  * `TAKEOVER_OFF`
-  * `REJOIN_START`
-  * `REJOIN_DONE`
+* `/mavros/state` connected
+* `MISSION -> AVOID -> REJOIN -> MISSION`
+* rosbag recorded for metrics
 
 ---
 
-## Phase 6 metrics workflow
+## 15. Quick start — hardware bench / field preparation
 
-### 1. Record a run
+### Terminal 1 — video server
 
-Example:
+```bash
+cd ~/Seano_ws/resource_git/seano-collision-avoidance/seano_ca_ws
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+
+ros2 run web_video_server web_video_server
+```
+
+### Terminal 2 — Phase 7
+
+```bash
+cd ~/Seano_ws/resource_git/seano-collision-avoidance/seano_ca_ws
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+
+ros2 launch seano_vision phase7_cuav_usb_hardware.launch.py \
+  fcu_url:=/dev/ttyACM0:115200 \
+  record:=true \
+  bag_name:=fieldtest_main_01
+```
+
+### Browser monitoring
+
+Open:
+
+* raw camera stream
+* annotated image stream
+* CA HUD stream
+
+Typical topics:
+
+* `/seano/camera/image_raw_reliable`
+* `/camera/image_annotated`
+* `/ca/debug_image`
+
+---
+
+## 16. Phase 6 metrics workflow
+
+### Record run
 
 ```bash
 ros2 launch seano_vision phase5_mission_avoid_integration.launch.py \
@@ -402,35 +479,21 @@ ros2 launch seano_vision phase5_mission_avoid_integration.launch.py \
   master_enable_on_start:=true
 ```
 
-### 2. Extract metrics from one bag
+### Extract one bag
 
 ```bash
 python3 ~/seano-collision-avoidance/seano_ca_ws/src/seano_vision/scripts/phase6_metrics_from_bag.py \
   --bag ~/bags/phase6_rejoin_run_01
 ```
 
-### 3. Aggregate multiple runs
+### Aggregate multiple bags
 
 ```bash
 python3 ~/seano-collision-avoidance/seano_ca_ws/src/seano_vision/scripts/phase6_collect_results.py \
   --root ~/bags
 ```
 
-Expected outputs:
-
-* per-bag metrics JSON:
-
-  * `~/bags/<bag_name>/phase6_metrics.json`
-* aggregated results:
-
-  * `~/bags/phase6_summary/phase6_results.csv`
-  * `~/bags/phase6_summary/phase6_results.md`
-
----
-
-## Phase 6 metrics currently tracked
-
-Per-bag metrics include:
+Tracked metrics include:
 
 * takeover segments
 * takeover duration
@@ -440,59 +503,9 @@ Per-bag metrics include:
 * failsafe rises
 * mission-mode mismatch ratio
 
-These metrics are intended to support the thesis evaluation chapter.
-
 ---
 
-## AI environment (WSL x86_64)
-
-Use a dedicated venv to avoid affecting ROS.
-
-```bash
-cd ~/seano-collision-avoidance
-
-python3 -m venv .venv_ai
-source .venv_ai/bin/activate
-
-python -m pip install -U pip setuptools wheel
-python -m pip install --no-cache-dir -r requirements.txt
-
-python -c "import torch; print('TORCH_OK', torch.__version__)"
-python -c "from ultralytics import YOLO; YOLO('yolov8n.pt'); print('MODEL_OK')"
-```
-
-Expected output:
-
-* `TORCH_OK ...`
-* `MODEL_OK`
-
----
-
-## AI environment (Jetson aarch64)
-
-Do not install `torch` from standard pip wheels on Jetson.
-
-Recommended order:
-
-1. install PyTorch/torchvision according to NVIDIA / JetPack guidance
-2. then install ultralytics and remaining dependencies
-
-```bash
-python3 -m venv .venv_ai
-source .venv_ai/bin/activate
-python -m pip install -U pip setuptools wheel
-
-python -c "import torch; print('TORCH_OK', torch.__version__)"
-
-pip install ultralytics --no-deps
-pip install -r requirements.txt
-
-python -c "from ultralytics import YOLO; YOLO('yolov8n.pt'); print('MODEL_OK')"
-```
-
----
-
-## Current limitations
+## 17. Current limitations
 
 Current active baseline already supports:
 
@@ -500,45 +513,59 @@ Current active baseline already supports:
 * release back to mission
 * explicit `REJOIN`
 * rosbag metrics extraction
+* hardware bench bring-up with Phase 7
 
 Still limited:
 
-* rejoin is still mission-resume oriented, not a fully independent path replanner
-* synthetic camera is still the default simulation perception source
-* hardware camera baseline is planned after simulation metrics stabilize
+* rejoin is mission-resume oriented, not a full path replanner
+* detector performance still strongly affects hardware behavior
+* field success depends on visibility, obstacle presentation, and runtime stability
+* controlled field validation still needs to be expanded
 
 ---
 
-## Recommended next operational sequence
+## 18. Recommended operational sequence
 
-Recommended execution order:
+### For simulation
 
-1. validate Case A
-2. validate Case B
-3. validate Case C (`synthetic_light`)
-4. record hazard/rejoin bags
-5. record failsafe bags
+1. validate SITL + MAVROS + Mission Planner
+2. validate Phase 5 Case C
+3. record hazard / rejoin runs
+4. record failsafe runs
+5. extract Phase 6 metrics
 6. aggregate results
-7. migrate to USB camera
-8. prepare hardware porting and controlled field test
+
+### For hardware
+
+1. validate USB camera
+2. validate detector
+3. validate risk + HUD
+4. validate Phase 7 dockside
+5. validate AUTO waypoint without obstacle
+6. validate obstacle run
+7. validate avoidance + rejoin behavior
+8. review rosbag and logs
 
 ---
 
-## CI
+## 19. CI
 
-This repository includes a ROS 2 Humble build workflow.
+This repository includes:
 
-* Workflow: `.github/workflows/ros2_ci.yml`
-* Status: shown via badge
+* ROS 2 Humble CI workflow
+* Release Drafter
+* Dependabot configuration
 
 ---
 
-## Citation and academic use
+## 20. Citation and academic use
 
 If this repository is referenced in academic work, use `CITATION.cff` as the canonical citation metadata.
 
 ---
 
-## License
+## 21. License
 
 This project is released under the MIT License. See `LICENSE`.
+
+````
