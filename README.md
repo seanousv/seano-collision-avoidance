@@ -1,11 +1,12 @@
-[![ROS2 Humble CI](https://github.com/seanousv/seano-collision-avoidance/actions/workflows/ros2_ci.yml/badge.svg)](https://github.com/seanousv/seano-collision-avoidance/actions/workflows/ros2_ci.yml)
+[![ROS2 Humble CI](https://github.com/seanousv/seano-collision-avoidance/actions/workflows/ros2-humble-ci.yml/badge.svg)](https://github.com/seanousv/seano-collision-avoidance/actions/workflows/ros2-humble-ci.yml)
 [![Release Drafter](https://github.com/seanousv/seano-collision-avoidance/actions/workflows/release-drafter.yml/badge.svg)](https://github.com/seanousv/seano-collision-avoidance/actions/workflows/release-drafter.yml)
-[![Dependabot](https://img.shields.io/badge/dependabot-enabled-brightgreen)](https://github.com/seanousv/seano-collision-avoidance/network/updates)
-[![Runbook](https://img.shields.io/badge/docs-Runbook-0A66C2?style=for-the-badge)](docs/RUNBOOK.md)
-[![Architecture](https://img.shields.io/badge/docs-Architecture-6F42C1?style=for-the-badge)](docs/ARCHITECTURE.md)
-[![Launch Status](https://img.shields.io/badge/docs-Launch_Status_Map-1F883D?style=for-the-badge)](docs/LAUNCH_STATUS_MAP.md)
-[![Bench Results](https://img.shields.io/badge/docs-Hardware_Bench_Results-8250DF?style=for-the-badge)](docs/HARDWARE_BENCH_RESULTS.md)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Dependabot](https://img.shields.io/badge/dependabot-enabled-2ea44f?style=flat-square)](./.github/dependabot.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-f1c232?style=flat-square)](LICENSE)
+
+[![Docs: Runbook](https://img.shields.io/badge/Docs-Runbook-0969da?style=flat-square)](docs/RUNBOOK.md)
+[![Docs: Architecture](https://img.shields.io/badge/Docs-Architecture-8250df?style=flat-square)](docs/ARCHITECTURE.md)
+[![Docs: Launch Status Map](https://img.shields.io/badge/Docs-Launch%20Status%20Map-1a7f37?style=flat-square)](docs/LAUNCH_STATUS_MAP.md)
+[![Docs: Hardware Bench Results](https://img.shields.io/badge/Docs-Hardware%20Bench%20Results-a371f7?style=flat-square)](docs/HARDWARE_BENCH_RESULTS.md)
 
 
 # SEANO Collision Avoidance (ROS 2 Humble)
