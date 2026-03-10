@@ -23,10 +23,49 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
+from launch.substitutions import LaunchConfiguration, PathJoinSubstitution, PythonExpression
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 from launch_ros.substitutions import FindPackageShare
+
+
+def _effective_risk_input_topic(
+    explicit_topic: LaunchConfiguration,
+    use_fusion: LaunchConfiguration,
+    use_fp_guard: LaunchConfiguration,
+    detections_raw_topic: LaunchConfiguration,
+    detections_filtered_topic: LaunchConfiguration,
+    detections_fused_topic: LaunchConfiguration,
+) -> PythonExpression:
+    """
+    Pilih input detections untuk risk node secara otomatis:
+      1) kalau explicit_topic diisi -> pakai itu
+      2) kalau fusion aktif       -> pakai fused
+      3) kalau fp_guard aktif     -> pakai filtered
+      4) selain itu               -> pakai raw
+    """
+    return PythonExpression(
+        [
+            "'",
+            explicit_topic,
+            "' if '",
+            explicit_topic,
+            "' != '' else (",
+            "'",
+            detections_fused_topic,
+            "' if '",
+            use_fusion,
+            "'.lower() == 'true' else (",
+            "'",
+            detections_filtered_topic,
+            "' if '",
+            use_fp_guard,
+            "'.lower() == 'true' else '",
+            detections_raw_topic,
+            "'",
+            "))",
+        ]
+    )
 
 
 def generate_launch_description():
@@ -53,23 +92,23 @@ def generate_launch_description():
     pkg_share = FindPackageShare("seano_vision")
 
     camera_include = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(PathJoinSubstitution([pkg_share, "launch", camera_launch])),
+        PythonLaunchDescriptionSource(
+            PathJoinSubstitution([pkg_share, "launch", camera_launch])
+        ),
         condition=IfCondition(use_camera),
     )
 
     # -------------------------
-    # Topics (IMPORTANT)
+    # Topics
     # -------------------------
-    # Default pakai RELIABLE topic untuk menghindari QoS mismatch.
     image_topic = LaunchConfiguration("image_topic")
-
     annotated_topic = LaunchConfiguration("annotated_topic")
 
     detections_raw_topic = LaunchConfiguration("detections_raw_topic")
     detections_filtered_topic = LaunchConfiguration("detections_filtered_topic")
     detections_fused_topic = LaunchConfiguration("detections_fused_topic")
 
-    # Risk consume topic ini (default fused)
+    # Boleh dioverride caller. Kalau kosong, akan dipilih otomatis.
     detections_for_risk_topic = LaunchConfiguration("detections_for_risk_topic")
 
     waterline_topic = LaunchConfiguration("waterline_topic")
@@ -89,7 +128,7 @@ def generate_launch_description():
     debug_image_topic = LaunchConfiguration("debug_image_topic")
 
     # -------------------------
-    # Detector QoS (node kamu support)
+    # Detector QoS
     # -------------------------
     det_sub_reliability = LaunchConfiguration("det_sub_reliability")
     det_pub_reliability = LaunchConfiguration("det_pub_reliability")
@@ -119,6 +158,18 @@ def generate_launch_description():
     # -------------------------
     wd_startup_grace_s = LaunchConfiguration("wd_startup_grace_s")
     wd_start_in_failsafe = LaunchConfiguration("wd_start_in_failsafe")
+
+    # -------------------------
+    # Effective risk input topic
+    # -------------------------
+    effective_detections_for_risk_topic = _effective_risk_input_topic(
+        explicit_topic=detections_for_risk_topic,
+        use_fusion=use_fusion,
+        use_fp_guard=use_fp_guard,
+        detections_raw_topic=detections_raw_topic,
+        detections_filtered_topic=detections_filtered_topic,
+        detections_fused_topic=detections_fused_topic,
+    )
 
     # -------------------------
     # Nodes
@@ -156,7 +207,6 @@ def generate_launch_description():
                 "input_topic": image_topic,
                 "waterline_topic": waterline_topic,
                 "debug_topic": waterline_debug_topic,
-                # tuning default yang aman
                 "enable_debug": True,
                 "publish_mask": True,
                 "default_ratio": 0.35,
@@ -205,9 +255,8 @@ def generate_launch_description():
                 "input_topic": detections_filtered_topic,
                 "output_topic": detections_fused_topic,
                 "image_topic": image_topic,
-                "output_mode": fusion_mode,  # topk / sort_all
+                "output_mode": fusion_mode,
                 "top_k": ParameterValue(fusion_top_k, value_type=int),
-                # default weights
                 "w_bottom": 0.55,
                 "w_area": 0.25,
                 "w_center": 0.20,
@@ -252,7 +301,6 @@ def generate_launch_description():
                 "freeze_topic": freeze_topic,
                 "score_topic": freeze_score_topic,
                 "reason_topic": freeze_reason_topic,
-                # default aman
                 "diff_threshold": 2.5,
                 "consecutive_frames": 15,
                 "no_frame_timeout_s": 2.0,
@@ -261,7 +309,7 @@ def generate_launch_description():
         ],
     )
 
-    # Risk evaluator (node kamu declare: detections_topic + image_topic)
+    # Risk evaluator
     risk_node = Node(
         package="seano_vision",
         executable="risk_evaluator_node",
@@ -270,7 +318,7 @@ def generate_launch_description():
         condition=IfCondition(use_risk),
         parameters=[
             {
-                "detections_topic": detections_for_risk_topic,
+                "detections_topic": effective_detections_for_risk_topic,
                 "image_topic": image_topic,
                 "risk_topic": risk_topic,
                 "command_topic": command_topic,
@@ -278,7 +326,6 @@ def generate_launch_description():
                 "metrics_topic": metrics_topic,
                 "debug_image_topic": debug_image_topic,
                 "publish_debug_image": True,
-                # External VQ + Freeze (match param di risk node kamu)
                 "use_external_vision_quality": ParameterValue(use_vq, value_type=bool),
                 "external_vq_topic": vq_topic,
                 "use_freeze_detector": ParameterValue(use_freeze, value_type=bool),
@@ -288,7 +335,7 @@ def generate_launch_description():
         ],
     )
 
-    # Watchdog failsafe (ikut pattern param run manual kamu)
+    # Watchdog failsafe
     watchdog_node = Node(
         package="seano_vision",
         executable="watchdog_failsafe_node",
@@ -327,9 +374,6 @@ def generate_launch_description():
         remappings=[("image", waterline_debug_topic)],
     )
 
-    # -------------------------
-    # Args + LaunchDescription
-    # -------------------------
     return LaunchDescription(
         [
             # toggles
@@ -342,27 +386,38 @@ def generate_launch_description():
             DeclareLaunchArgument("use_freeze", default_value="true"),
             DeclareLaunchArgument("use_risk", default_value="true"),
             DeclareLaunchArgument("use_watchdog", default_value="true"),
-            DeclareLaunchArgument("use_ca_viewer", default_value="true"),
-            DeclareLaunchArgument("use_wl_viewer", default_value="true"),
+            DeclareLaunchArgument("use_ca_viewer", default_value="false"),
+            DeclareLaunchArgument("use_wl_viewer", default_value="false"),
+
             # camera include
             DeclareLaunchArgument("camera_launch", default_value="camera_hp.launch.py"),
-            # IMPORTANT DEFAULT: RELIABLE image topic
+
+            # image topic
             DeclareLaunchArgument("image_topic", default_value="/camera/image_raw_reliable"),
+
             # topics
             DeclareLaunchArgument("annotated_topic", default_value="/camera/image_annotated"),
             DeclareLaunchArgument("detections_raw_topic", default_value="/camera/detections"),
             DeclareLaunchArgument(
-                "detections_filtered_topic", default_value="/camera/detections_filtered"
+                "detections_filtered_topic",
+                default_value="/camera/detections_filtered",
             ),
             DeclareLaunchArgument(
-                "detections_fused_topic", default_value="/camera/detections_fused"
+                "detections_fused_topic",
+                default_value="/camera/detections_fused",
             ),
-            # risk uses fused by default
+
+            # kosong = auto select by enabled pipeline stage
             DeclareLaunchArgument(
-                "detections_for_risk_topic", default_value="/camera/detections_fused"
+                "detections_for_risk_topic",
+                default_value="",
             ),
+
             DeclareLaunchArgument("waterline_topic", default_value="/vision/waterline_y"),
-            DeclareLaunchArgument("waterline_debug_topic", default_value="/vision/waterline_debug"),
+            DeclareLaunchArgument(
+                "waterline_debug_topic",
+                default_value="/vision/waterline_debug",
+            ),
             DeclareLaunchArgument("vq_topic", default_value="/vision/quality"),
             DeclareLaunchArgument("vq_detail_topic", default_value="/vision/quality_detail"),
             DeclareLaunchArgument("freeze_topic", default_value="/vision/freeze"),
@@ -373,10 +428,12 @@ def generate_launch_description():
             DeclareLaunchArgument("mode_topic", default_value="/ca/mode"),
             DeclareLaunchArgument("metrics_topic", default_value="/ca/metrics"),
             DeclareLaunchArgument("debug_image_topic", default_value="/ca/debug_image"),
+
             # detector QoS
             DeclareLaunchArgument("det_sub_reliability", default_value="reliable"),
             DeclareLaunchArgument("det_pub_reliability", default_value="reliable"),
             DeclareLaunchArgument("det_qos_depth", default_value="10"),
+
             # FP guard args
             DeclareLaunchArgument("fp_use_waterline", default_value="true"),
             DeclareLaunchArgument("fp_waterline_margin_px", default_value="15"),
@@ -386,13 +443,16 @@ def generate_launch_description():
             DeclareLaunchArgument("fp_min_hits", default_value="3"),
             DeclareLaunchArgument("fp_iou_match", default_value="0.35"),
             DeclareLaunchArgument("fp_max_miss", default_value="4"),
+
             # fusion args
             DeclareLaunchArgument("fusion_enabled", default_value="true"),
             DeclareLaunchArgument("fusion_mode", default_value="topk"),
             DeclareLaunchArgument("fusion_top_k", default_value="3"),
+
             # watchdog args
             DeclareLaunchArgument("wd_startup_grace_s", default_value="3.0"),
             DeclareLaunchArgument("wd_start_in_failsafe", default_value="false"),
+
             # actions
             camera_include,
             detector_node,
