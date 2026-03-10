@@ -1,8 +1,18 @@
 blank_issues_enabled: false
+
 contact_links:
-  - name: Documentation (README)
-    url: https://github.com/seanousv/seano-collision-avoidance#readme
-    about: Setup guide, runbook, and repository documentation.
-  - name: Issues (browse)
-    url: https://github.com/seanousv/seano-collision-avoidance/issues
-    about: Browse existing issues before creating a new one.
+  - name: Documentation - Runbook
+    url: https://github.com/seanousv/seano-collision-avoidance/blob/main/docs/RUNBOOK.md
+    about: Read the operational run sequence and validation flow before opening an issue.
+
+  - name: Documentation - Architecture
+    url: https://github.com/seanousv/seano-collision-avoidance/blob/main/docs/ARCHITECTURE.md
+    about: Review system architecture, node roles, and topic-level integration.
+
+  - name: Documentation - Launch Status Map
+    url: https://github.com/seanousv/seano-collision-avoidance/blob/main/docs/LAUNCH_STATUS_MAP.md
+    about: Check current launch-file status and active baseline coverage.
+
+  - name: Documentation - Hardware Bench Results
+    url: https://github.com/seanousv/seano-collision-avoidance/blob/main/docs/HARDWARE_BENCH_RESULTS.md
+    about: Review current Jetson plus CUAV X7+ hardware bench evidence before reporting hardware issues.
