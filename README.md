@@ -87,12 +87,14 @@ This is why the control architecture is built around left/right actuation rather
 ---
 
 # 3. Repository Map
+
 ````md
 ```text
 seano-collision-avoidance/
 ├── .github/
 ├── docs/
 │   ├── ARCHITECTURE.md
+│   ├── HARDWARE_BENCH_RESULTS.md
 │   ├── LAUNCH_STATUS_MAP.md
 │   ├── PHASE6_RESULTS_SUMMARY.md
 │   ├── PHASE6_TEST_MATRIX.md
@@ -125,7 +127,9 @@ seano-collision-avoidance/
 Useful entry points:
 
 * [Launch Status Map](docs/LAUNCH_STATUS_MAP.md)
+* [Hardware Bench Results](docs/HARDWARE_BENCH_RESULTS.md)
 * [Architecture](docs/ARCHITECTURE.md)
+* [Simulation + Hardware Runbook](docs/RUNBOOK.md)
 * [Main launch directory](seano_ca_ws/src/seano_vision/launch/)
 * [Main Python nodes](seano_ca_ws/src/seano_vision/seano_vision/)
 * [Metrics scripts](seano_ca_ws/src/seano_vision/scripts/)
@@ -602,8 +606,9 @@ Expected behavior:
 
 # 11. Related Documents
 
-* [Simulation Runbook](docs/RUNBOOK.md)
+* [Simulation + Hardware Runbook](docs/RUNBOOK.md)
 * [Launch Status Map](docs/LAUNCH_STATUS_MAP.md)
+* [Hardware Bench Results](docs/HARDWARE_BENCH_RESULTS.md)
 * [Architecture](docs/ARCHITECTURE.md)
 * [Phase 6 Test Matrix](docs/PHASE6_TEST_MATRIX.md)
 * [Phase 6 Results Summary](docs/PHASE6_RESULTS_SUMMARY.md)
