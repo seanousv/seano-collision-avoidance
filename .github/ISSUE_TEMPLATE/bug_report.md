@@ -1,20 +1,27 @@
 ---
 name: Bug report
-about: Report a reproducible problem to help us improve
-title: "[BUG] "
-labels: bug
-assignees: ""
+about: Report a reproducible problem in simulation, hardware, or repository workflow
+labels:
+  - bug
 ---
 
 ## Summary
-<!-- One sentence describing the problem. -->
+Describe the problem clearly in 1-3 sentences.
+
+## Affected baseline
+- [ ] Simulation baseline (SITL + MAVROS + Mission Planner)
+- [ ] Hardware baseline (Jetson + CUAV X7+ + USB camera)
+- [ ] Repository / documentation / CI
 
 ## Environment
-- OS: (Windows/WSL2 Ubuntu 22.04/Jetson)
-- ROS 2: (Humble)
-- MAVROS: (version or install method)
-- ArduPilot: (SITL Rover rover-skid / hardware)
-- Mission Planner: (version if relevant)
+- OS:
+- ROS 2 distro:
+- Workspace / branch:
+- Python version:
+- Device:
+- Camera source:
+- Autopilot / firmware:
+- Mission Planner version:
 
 ## Steps to reproduce
 1.
@@ -22,16 +29,27 @@ assignees: ""
 3.
 
 ## Expected behavior
-<!-- What should happen? -->
+Describe what should happen.
 
 ## Actual behavior
-<!-- What actually happened? -->
+Describe what actually happened.
 
-## Logs / Evidence
-<!-- Paste minimal logs. Screenshots are OK. -->
-- Command(s) run:
-- Output:
-- Relevant topics (`/mavros/state`, etc.):
+## Evidence
+- Launch command:
+- Node(s) involved:
+- Topic(s) involved:
+- Log excerpt:
+- Screenshot / photo / recording:
+- Related file or launch file:
+
+## Impact
+- [ ] Blocks simulation test
+- [ ] Blocks hardware bench test
+- [ ] Cosmetic / non-blocking
+- [ ] Intermittent
+
+## Suspected cause
+Describe the likely cause if you already have a hypothesis.
 
 ## Additional context
-<!-- Anything else that may help (ports, WSL IP, recent changes). -->
+Add any other context, link, or reference here.
