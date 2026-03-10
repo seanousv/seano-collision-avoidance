@@ -1,18 +1,23 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-SEANO - demo_full_ca.launch.py (FULL PIPELINE)
+SEANO - demo_full_ca.launch.py
 
-Pipeline:
+Default baseline:
+  USB camera minimal CA pipeline (hardware-friendly)
+
+Default active path:
   (optional) camera include launch
   detector -> /camera/detections
+  risk_evaluator -> /ca/risk + /ca/command + /ca/mode + /ca/debug_image
+  watchdog_failsafe -> /ca/failsafe_active + /ca/failsafe_reason (+ status)
+
+Optional full-pipeline modules (disabled by default):
   waterline_horizon -> /vision/waterline_y + /vision/waterline_debug
   false_positive_guard -> /camera/detections_filtered
   multi_target_fusion -> /camera/detections_fused
   vision_quality -> /vision/quality (+ detail)
   frame_freeze_detector -> /vision/freeze (+ score + reason)
-  risk_evaluator -> /ca/risk + /ca/command + /ca/mode + /ca/debug_image
-  watchdog_failsafe -> /ca/failsafe_active + /ca/failsafe_reason (+ status)
 
 Viewer:
   showimage /ca/debug_image
@@ -175,7 +180,6 @@ def generate_launch_description():
     # Nodes
     # -------------------------
 
-    # Detector
     detector_node = Node(
         package="seano_vision",
         executable="detector_node",
@@ -195,7 +199,6 @@ def generate_launch_description():
         ],
     )
 
-    # Waterline / Horizon
     waterline_node = Node(
         package="seano_vision",
         executable="waterline_horizon_node",
@@ -217,7 +220,6 @@ def generate_launch_description():
         ],
     )
 
-    # False Positive Guard
     fp_guard_node = Node(
         package="seano_vision",
         executable="false_positive_guard_node",
@@ -242,7 +244,6 @@ def generate_launch_description():
         ],
     )
 
-    # Multi Target Fusion
     fusion_node = Node(
         package="seano_vision",
         executable="multi_target_fusion_node",
@@ -270,7 +271,6 @@ def generate_launch_description():
         ],
     )
 
-    # Vision Quality
     vq_node = Node(
         package="seano_vision",
         executable="vision_quality_node",
@@ -288,7 +288,6 @@ def generate_launch_description():
         ],
     )
 
-    # Freeze detector
     freeze_node = Node(
         package="seano_vision",
         executable="frame_freeze_detector_node",
@@ -309,7 +308,6 @@ def generate_launch_description():
         ],
     )
 
-    # Risk evaluator
     risk_node = Node(
         package="seano_vision",
         executable="risk_evaluator_node",
@@ -335,7 +333,6 @@ def generate_launch_description():
         ],
     )
 
-    # Watchdog failsafe
     watchdog_node = Node(
         package="seano_vision",
         executable="watchdog_failsafe_node",
@@ -355,7 +352,6 @@ def generate_launch_description():
         ],
     )
 
-    # Viewers
     ca_viewer = Node(
         package="image_tools",
         executable="showimage",
@@ -376,24 +372,30 @@ def generate_launch_description():
 
     return LaunchDescription(
         [
-            # toggles
+            # toggles - default sekarang selaras dengan baseline hardware USB
             DeclareLaunchArgument("use_camera", default_value="true"),
             DeclareLaunchArgument("use_detector", default_value="true"),
-            DeclareLaunchArgument("use_waterline", default_value="true"),
-            DeclareLaunchArgument("use_fp_guard", default_value="true"),
-            DeclareLaunchArgument("use_fusion", default_value="true"),
-            DeclareLaunchArgument("use_vq", default_value="true"),
-            DeclareLaunchArgument("use_freeze", default_value="true"),
+            DeclareLaunchArgument("use_waterline", default_value="false"),
+            DeclareLaunchArgument("use_fp_guard", default_value="false"),
+            DeclareLaunchArgument("use_fusion", default_value="false"),
+            DeclareLaunchArgument("use_vq", default_value="false"),
+            DeclareLaunchArgument("use_freeze", default_value="false"),
             DeclareLaunchArgument("use_risk", default_value="true"),
             DeclareLaunchArgument("use_watchdog", default_value="true"),
             DeclareLaunchArgument("use_ca_viewer", default_value="false"),
             DeclareLaunchArgument("use_wl_viewer", default_value="false"),
 
-            # camera include
-            DeclareLaunchArgument("camera_launch", default_value="camera_hp.launch.py"),
+            # camera include - default tidak lagi ke kamera HP lama
+            DeclareLaunchArgument(
+                "camera_launch",
+                default_value="phase2_camera_usb_test.launch.py",
+            ),
 
-            # image topic
-            DeclareLaunchArgument("image_topic", default_value="/camera/image_raw_reliable"),
+            # image topic - selaras dengan baseline hardware sekarang
+            DeclareLaunchArgument(
+                "image_topic",
+                default_value="/seano/camera/image_raw_reliable",
+            ),
 
             # topics
             DeclareLaunchArgument("annotated_topic", default_value="/camera/image_annotated"),

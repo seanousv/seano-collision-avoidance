@@ -15,6 +15,15 @@ def generate_launch_description():
     pkg_share = get_package_share_directory("seano_vision")
     cfg = os.path.join(pkg_share, "config", "camera_usb.yaml")
 
+    # Default stabil untuk kamera USB yang sudah terdeteksi di Jetson:
+    # /dev/v4l/by-id/usb-FEC_NYK_NEMESIS_202001010001-video-index0 -> ../../video0
+    #
+    # Jika suatu saat symlink by-id berubah, override saat launch:
+    #   device_path:=/dev/v4l/by-id/<nama-baru>-video-index0
+    default_device_path = (
+        "/dev/v4l/by-id/usb-FEC_NYK_NEMESIS_202001010001-video-index0"
+    )
+
     device_index = LaunchConfiguration("device_index")
     device_path = LaunchConfiguration("device_path")
     device_fourcc = LaunchConfiguration("device_fourcc")
@@ -34,9 +43,9 @@ def generate_launch_description():
         # Source
         "source": "device",
         "backend": "opencv",
-        # KUNCI FIX 1:
-        # jangan paksa /dev/video0 sebagai URI/path default.
-        # Biarkan node membuka kamera via device_index=0.
+        # Prioritas sekarang: buka kamera via device_path yang stabil (by-id),
+        # bukan lagi mengandalkan index 0.
+        # device_index tetap disediakan hanya sebagai fallback manual.
         "device_index": ParameterValue(device_index, value_type=int),
         "device_path": device_path,
         # Format device
@@ -54,8 +63,7 @@ def generate_launch_description():
         "swap_rb": False,
         "reconnect_sec": ParameterValue(reconnect_sec, value_type=float),
         "log_stats_sec": ParameterValue(log_stats_sec, value_type=float),
-        # KUNCI FIX 2:
-        # publish kedua jalur supaya kompatibel dengan hardware phase7.
+        # Publish dua jalur supaya tetap kompatibel dengan baseline hardware phase7
         "publish_best_effort": True,
         "publish_reliable": True,
         "topic_best_effort": topic_best_effort,
@@ -64,11 +72,21 @@ def generate_launch_description():
 
     return LaunchDescription(
         [
-            DeclareLaunchArgument("device_index", default_value="0"),
+            DeclareLaunchArgument(
+                "device_index",
+                default_value="0",
+                description=(
+                    "Fallback index kamera. Normalnya diabaikan karena device_path "
+                    "sudah diisi dengan symlink by-id yang stabil."
+                ),
+            ),
             DeclareLaunchArgument(
                 "device_path",
-                default_value="",
-                description="Kosongkan default supaya camera open via device_index, bukan URI /dev/video0.",
+                default_value=default_device_path,
+                description=(
+                    "Path kamera stabil berbasis /dev/v4l/by-id. "
+                    "Kosongkan hanya jika ingin pakai device_index secara manual."
+                ),
             ),
             DeclareLaunchArgument("device_fourcc", default_value="MJPG"),
             DeclareLaunchArgument("device_width", default_value="640"),
@@ -89,7 +107,7 @@ def generate_launch_description():
             Node(
                 package="seano_vision",
                 executable="camera_node",
-                name="camera_hp",  # harus match key YAML (camera_hp:)
+                name="camera_hp",  # jangan diubah dulu; harus match key YAML aktif
                 output="screen",
                 emulate_tty=True,
                 parameters=[cfg, overrides],
