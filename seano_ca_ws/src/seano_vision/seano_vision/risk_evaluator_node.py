@@ -16,7 +16,7 @@ Subscribe (vision health / optional but recommended):
 Publish:
   - /ca/risk            (std_msgs/Float32)
   - /ca/command         (std_msgs/String)
-  - /ca/mode            (std_msgs/String)   [NEW]
+  - /ca/mode            (std_msgs/String)
   - /ca/metrics         (std_msgs/String JSON)
   - /ca/vision_quality  (std_msgs/Float32)
   - /ca/debug_image     (sensor_msgs/Image)
@@ -27,6 +27,11 @@ Notes:
 - Bearing ruler overlay (camera-relative) for navigational feel.
 - Image buffer by stamp to better align debug overlay with detections.
 - Added state machine: NORMAL / CAUTION / LOST_PERCEPTION with hysteresis + failsafe.
+- Revised for paper-grade analysis:
+    * pseudo-TTC integrated into risk
+    * situation-aware maneuver bias
+    * richer reason logging
+    * vTTC label (not TCPA)
 """
 
 from __future__ import annotations
@@ -194,7 +199,7 @@ class RiskEvaluatorNode(Node):
         # Topics (publish)
         self.declare_parameter("risk_topic", "/ca/risk")
         self.declare_parameter("command_topic", "/ca/command")
-        self.declare_parameter("mode_topic", "/ca/mode")  # NEW
+        self.declare_parameter("mode_topic", "/ca/mode")
         self.declare_parameter("metrics_topic", "/ca/metrics")
         self.declare_parameter("vision_quality_topic", "/ca/vision_quality")
         self.declare_parameter("debug_image_topic", "/ca/debug_image")
@@ -233,20 +238,32 @@ class RiskEvaluatorNode(Node):
         self.declare_parameter("near_area_ratio", 0.08)
 
         # Risk weights
-        self.declare_parameter("w_proximity", 0.50)
-        self.declare_parameter("w_center", 0.20)
-        self.declare_parameter("w_approach", 0.20)
+        self.declare_parameter("w_proximity", 0.40)
+        self.declare_parameter("w_center", 0.18)
+        self.declare_parameter("w_approach", 0.16)
         self.declare_parameter("w_bearing_const", 0.10)
+        self.declare_parameter("w_ttc", 0.16)
         self.declare_parameter("bearing_rate_bad_dps", 12.0)
+        self.declare_parameter("risk_ema_alpha", 0.35)
+        self.declare_parameter("vq_risk_floor", 0.80)
 
         # TTC proxy
         self.declare_parameter("ttc_area_threshold", 0.10)
         self.declare_parameter("ttc_max_s", 60.0)
+        self.declare_parameter("ttc_score_horizon_s", 6.0)
 
         # Avoid hysteresis
         self.declare_parameter("enter_avoid_risk", 0.55)
         self.declare_parameter("exit_avoid_risk", 0.35)
         self.declare_parameter("min_cmd_hold_s", 0.6)
+
+        # Command severity thresholds
+        self.declare_parameter("risk_slow_threshold", 0.45)
+        self.declare_parameter("risk_turn_slow_threshold", 0.55)
+        self.declare_parameter("risk_turn_threshold", 0.75)
+        self.declare_parameter("risk_stop_threshold", 0.92)
+        self.declare_parameter("vttc_turn_threshold_s", 4.0)
+        self.declare_parameter("vttc_stop_threshold_s", 1.2)
 
         # Commands
         self.declare_parameter("cmd_hold", "HOLD_COURSE")
@@ -263,17 +280,14 @@ class RiskEvaluatorNode(Node):
         # --------------------------
         # Vision Quality sources
         # --------------------------
-        # Internal VQ (your existing computation)
         self.declare_parameter("use_internal_vision_quality", True)
         self.declare_parameter("vq_check_every_n_frames", 6)
 
-        # External VQ (recommended)
         self.declare_parameter("use_external_vision_quality", True)
         self.declare_parameter("external_vq_topic", "/vision/quality")
-        self.declare_parameter("external_vq_timeout_s", 1.5)  # if stale -> fallback internal
+        self.declare_parameter("external_vq_timeout_s", 1.5)
 
-        # VQ threshold (for CAUTION behavior)
-        self.declare_parameter("vq_min", 0.25)  # legacy (still used as safety minimum)
+        self.declare_parameter("vq_min", 0.25)
 
         # --------------------------
         # Freeze Detector topics
@@ -281,28 +295,24 @@ class RiskEvaluatorNode(Node):
         self.declare_parameter("use_freeze_detector", True)
         self.declare_parameter("freeze_topic", "/vision/freeze")
         self.declare_parameter("freeze_reason_topic", "/vision/freeze_reason")
-        self.declare_parameter("freeze_timeout_s", 1.5)  # if stale -> assume not freeze
+        self.declare_parameter("freeze_timeout_s", 1.5)
 
         # --------------------------
-        # State machine (NEW)
+        # State machine
         # --------------------------
-        self.declare_parameter("tick_hz", 10.0)  # keep publishing even if detections stop
+        self.declare_parameter("tick_hz", 10.0)
 
-        # CAUTION hysteresis (based on VQ)
         self.declare_parameter("vq_caution_enter", 0.35)
         self.declare_parameter("vq_caution_exit", 0.55)
 
-        # LOST triggers
-        self.declare_parameter("image_timeout_s", 2.0)  # no new image received -> LOST
-        self.declare_parameter("lost_dark_vq", 0.25)  # vq low + freeze -> LOST
-        self.declare_parameter("lost_dark_freeze_hold_s", 1.2)  # hold duration before LOST
+        self.declare_parameter("image_timeout_s", 2.0)
+        self.declare_parameter("lost_dark_vq", 0.25)
+        self.declare_parameter("lost_dark_freeze_hold_s", 1.2)
 
-        # Recovery from LOST
         self.declare_parameter("lost_min_hold_s", 1.0)
         self.declare_parameter("recover_vq", 0.55)
         self.declare_parameter("recover_ok_hold_s", 0.6)
 
-        # When no detections for long time (still publish hold/slow)
         self.declare_parameter("detections_stale_s", 1.0)
 
         # --------------------------
@@ -315,14 +325,14 @@ class RiskEvaluatorNode(Node):
         # Overlay (maritime HUD)
         # --------------------------
         self.declare_parameter("overlay_enabled", True)
-        self.declare_parameter("overlay_anchor", "auto")  # auto/left/right
+        self.declare_parameter("overlay_anchor", "auto")
         self.declare_parameter("overlay_max_width_ratio", 0.42)
         self.declare_parameter("overlay_margin_px", 12)
         self.declare_parameter("overlay_padding_px", 10)
         self.declare_parameter("overlay_alpha_bg", 0.80)
         self.declare_parameter("overlay_border_thickness", 1)
 
-        self.declare_parameter("overlay_font_face", "simplex")  # simplex/plain
+        self.declare_parameter("overlay_font_face", "simplex")
         self.declare_parameter("overlay_scale_head", 0.56)
         self.declare_parameter("overlay_scale_body", 0.44)
         self.declare_parameter("overlay_thickness", 1)
@@ -336,12 +346,12 @@ class RiskEvaluatorNode(Node):
         self.declare_parameter("overlay_bbox_chip_alpha", 0.36)
 
         # Theme colors (BGR)
-        self.declare_parameter("overlay_bg_bgr", [16, 24, 40])  # deep navy
-        self.declare_parameter("overlay_panel_bgr", [12, 18, 32])  # panel navy
-        self.declare_parameter("overlay_teal_bgr", [180, 200, 0])  # teal accent
-        self.declare_parameter("overlay_grid_bgr", [110, 140, 170])  # steel
-        self.declare_parameter("overlay_text_bgr", [238, 238, 238])  # near white
-        self.declare_parameter("overlay_muted_bgr", [170, 170, 170])  # muted
+        self.declare_parameter("overlay_bg_bgr", [16, 24, 40])
+        self.declare_parameter("overlay_panel_bgr", [12, 18, 32])
+        self.declare_parameter("overlay_teal_bgr", [180, 200, 0])
+        self.declare_parameter("overlay_grid_bgr", [110, 140, 170])
+        self.declare_parameter("overlay_text_bgr", [238, 238, 238])
+        self.declare_parameter("overlay_muted_bgr", [170, 170, 170])
 
         # Bearing ruler
         self.declare_parameter("overlay_draw_bearing_ruler", True)
@@ -591,15 +601,12 @@ class RiskEvaluatorNode(Node):
     # --------------------------
     def on_detections(self, msg: Detection2DArray) -> None:
         self.last_det_rx_t = time.time()
-        # Run a full evaluate on detections arrival (fast reaction)
         self._process_once(det_msg=msg, source="detections_cb")
 
     # --------------------------
     # Timer tick (failsafe publishing)
     # --------------------------
     def on_tick(self) -> None:
-        # If detections are flowing, timer still helps keep LOST/CAUTION stable.
-        # But we avoid spamming if a detection callback happened very recently.
         t = time.time()
         if (t - self.last_det_rx_t) < 0.05:
             return
@@ -612,7 +619,6 @@ class RiskEvaluatorNode(Node):
         t0 = time.time()
         t = t0
 
-        # Update mode state machine first (can force STOP)
         self._update_mode_state(t)
 
         det_dt_ms = None
@@ -621,7 +627,6 @@ class RiskEvaluatorNode(Node):
                 det_dt_ms = float((t - self.last_det_t) * 1000.0)
             self.last_det_t = t
 
-        # Parse detections (if any)
         dets: List[Det] = []
         if det_msg is not None:
             dets = self._parse_detections(det_msg)
@@ -632,46 +637,43 @@ class RiskEvaluatorNode(Node):
             else:
                 self._tracks_from_dets(dets, t)
         else:
-            # prune stale tracks even without new dets
             self._prune_tracks(t)
 
-        # Evaluate risk
         overall_risk, top, metrics = self._evaluate(t, det_dt_ms)
 
-        # Force behavior by mode
         if self.mode == "LOST_PERCEPTION":
             cmd = str(self.get_parameter("cmd_stop").value)
             overall_risk = 1.0
             metrics["vision_mode"] = "LOST_PERCEPTION"
             metrics["cmd"] = cmd
+            metrics["decision_gate"] = "FORCED_LOST_PERCEPTION"
+            metrics["reason_codes"] = ["LOST_PERCEPTION", "FORCED_STOP"]
         else:
             cmd = self._decide_command(t, overall_risk, top, metrics)
 
-            # CAUTION: restrict aggressive turn -> prefer slow/hold
             if self.mode == "CAUTION":
                 metrics["vision_mode"] = "CAUTION"
                 if cmd.startswith("TURN"):
                     cmd = str(self.get_parameter("cmd_slow").value)
+                    metrics.setdefault("reason_codes", []).append("CAUTION_DEESCALATE_TURN")
                 if overall_risk < 0.25:
                     cmd = str(self.get_parameter("cmd_hold").value)
+                    metrics.setdefault("reason_codes", []).append("CAUTION_HOLD_LOW_RISK")
                 self._maybe_update_cmd(t, cmd, float(self.get_parameter("min_cmd_hold_s").value))
                 cmd = self.last_cmd
                 metrics["cmd"] = cmd
             else:
                 metrics["vision_mode"] = "NORMAL"
 
-        # finalize metrics
         proc_ms = (time.time() - t0) * 1000.0
         metrics["proc_ms"] = float(proc_ms)
         metrics["source"] = source
         metrics["mode"] = self.mode
 
-        # publish
         self.pub_risk.publish(Float32(data=float(overall_risk)))
         self.pub_cmd.publish(String(data=str(cmd)))
         self.pub_mode.publish(String(data=str(self.mode)))
 
-        # publish vq (current)
         vq = float(metrics.get("vision_quality", 1.0))
         self.pub_vq.publish(Float32(data=float(vq)))
 
@@ -680,7 +682,6 @@ class RiskEvaluatorNode(Node):
         except Exception:
             pass
 
-        # debug overlay (if we have a detections stamp, use it for sync; otherwise last image)
         if bool(self.get_parameter("publish_debug_image").value):
             self._publish_debug_overlay(det_msg, metrics, top)
 
@@ -693,7 +694,6 @@ class RiskEvaluatorNode(Node):
 
         if use_ext and (t - self.vq_ext_last_t) <= ext_timeout and self.vq_ext_last_t > 0.0:
             return float(self.vision_quality_external), "external"
-        # fallback internal
         return float(self.vision_quality_internal), "internal"
 
     def _get_freeze(self, t: float) -> Tuple[bool, str, str]:
@@ -707,8 +707,8 @@ class RiskEvaluatorNode(Node):
         return bool(self.freeze_flag), str(reason), "ok"
 
     def _update_mode_state(self, t: float) -> None:
-        vq, vq_src = self._get_vq(t)
-        freeze, freeze_reason, freeze_src = self._get_freeze(t)
+        vq, _vq_src = self._get_vq(t)
+        freeze, freeze_reason, _freeze_src = self._get_freeze(t)
 
         image_timeout_s = float(self.get_parameter("image_timeout_s").value)
         img_age = (t - self.last_img_rx_t) if (self.last_img_rx_t > 0.0) else 999.0
@@ -725,18 +725,14 @@ class RiskEvaluatorNode(Node):
 
         freeze_timeout = str(freeze_reason).strip().lower() == "timeout"
 
-        # Decide LOST trigger
         lost_trigger = False
 
-        # 1) No image
         if img_age >= image_timeout_s:
             lost_trigger = True
 
-        # 2) Freeze timeout (only if image also stale)
         if freeze_timeout and img_age >= image_timeout_s * 0.7:
             lost_trigger = True
 
-        # 3) Dark + Freeze hold
         dark_freeze = (freeze is True) and (vq <= lost_dark_vq) and (not freeze_timeout)
         if dark_freeze:
             if self.dark_freeze_since <= 0.0:
@@ -746,22 +742,18 @@ class RiskEvaluatorNode(Node):
         else:
             self.dark_freeze_since = 0.0
 
-        # Transition logic
         if self.mode == "LOST_PERCEPTION":
             if self.lost_since <= 0.0:
                 self.lost_since = t
 
-            # minimum hold in LOST
             if (t - self.lost_since) < lost_min_hold:
                 return
 
-            # recovery conditions
             ok = (img_age < image_timeout_s) and (not freeze_timeout) and (vq >= recover_vq)
             if ok:
                 if self.ok_since <= 0.0:
                     self.ok_since = t
                 if (t - self.ok_since) >= recover_ok_hold:
-                    # recover -> CAUTION dulu kalau vq belum stabil
                     self.mode = "CAUTION" if vq < vq_caution_exit else "NORMAL"
                     self.lost_since = 0.0
                     self.ok_since = 0.0
@@ -769,14 +761,12 @@ class RiskEvaluatorNode(Node):
                 self.ok_since = 0.0
             return
 
-        # not LOST currently
         if lost_trigger:
             self.mode = "LOST_PERCEPTION"
             self.lost_since = t
             self.ok_since = 0.0
             return
 
-        # CAUTION hysteresis by VQ
         if self.mode == "NORMAL":
             if vq <= vq_caution_enter:
                 self.mode = "CAUTION"
@@ -941,8 +931,10 @@ class RiskEvaluatorNode(Node):
         w_center = float(self.get_parameter("w_center").value)
         w_app = float(self.get_parameter("w_approach").value)
         w_bconst = float(self.get_parameter("w_bearing_const").value)
+        w_ttc = float(self.get_parameter("w_ttc").value)
+        risk_alpha = clamp(float(self.get_parameter("risk_ema_alpha").value), 0.01, 1.0)
+        vq_risk_floor = clamp(float(self.get_parameter("vq_risk_floor").value), 0.0, 1.0)
 
-        # vision health snapshot
         vq, vq_src = self._get_vq(t)
         freeze, freeze_reason, freeze_src = self._get_freeze(t)
         img_age = (t - self.last_img_rx_t) if (self.last_img_rx_t > 0.0) else 999.0
@@ -964,12 +956,12 @@ class RiskEvaluatorNode(Node):
             "num_tracks": int(len(self.tracks)),
             "det_dt_ms": det_dt_ms,
             "avoid_mode": bool(self.avoid_mode),
+            "risk_ema_alpha": float(risk_alpha),
+            "vq_risk_floor": float(vq_risk_floor),
         }
 
-        # If detections are stale for long time, treat as no target but keep state (important for timer mode)
         det_stale_s = float(self.get_parameter("detections_stale_s").value)
         if det_age > det_stale_s and self.mode != "LOST_PERCEPTION":
-            # prune tracks to avoid ghost commands
             self.tracks.clear()
             metrics["status"] = "detections_stale_cleared"
 
@@ -982,6 +974,10 @@ class RiskEvaluatorNode(Node):
         top_feat = {}
 
         ranked: List[Tuple[float, Track, dict, dict]] = []
+
+        a_th = float(self.get_parameter("ttc_area_threshold").value)
+        ttc_max = float(self.get_parameter("ttc_max_s").value)
+        ttc_horizon = max(0.25, float(self.get_parameter("ttc_score_horizon_s").value))
 
         for tr in self.tracks.values():
             x_ratio = tr.cx / max(W, 1e-9)
@@ -1001,26 +997,54 @@ class RiskEvaluatorNode(Node):
             prox_combo = clamp(0.60 * proximity + 0.40 * bottomness, 0.0, 1.0)
             conf = clamp(tr.score, 0.0, 1.0)
 
-            raw = (
+            ttc_proxy = None
+            ttc_reason = "disabled"
+            ttc_score = 0.0
+            if a_th > 1e-9:
+                if area_ratio >= a_th:
+                    ttc_proxy = 0.0
+                    ttc_reason = "at_threshold"
+                    ttc_score = 1.0
+                elif tr.dlog_area_dt > 1e-6:
+                    ttc = (
+                        math.log(max(a_th, 1e-9)) - math.log(max(area_ratio, 1e-9))
+                    ) / tr.dlog_area_dt
+                    ttc = clamp(ttc, 0.0, ttc_max)
+                    ttc_proxy = float(ttc)
+                    ttc_reason = "ok"
+                    ttc_score = 1.0 - smoothstep(0.0, ttc_horizon, ttc)
+                else:
+                    ttc_reason = "no_approach"
+                    ttc_score = 0.0
+
+            raw_geom = (
                 w_prox * prox_combo
                 + w_center * centrality
                 + w_app * approach
                 + w_bconst * bearing_const
+                + w_ttc * ttc_score
             )
-            raw = clamp(raw * (0.55 + 0.45 * conf), 0.0, 1.0)
+            raw_geom = clamp(raw_geom, 0.0, 1.0)
 
-            # vq scales risk (same style as your previous logic)
-            raw = clamp(raw * (0.5 + 0.5 * vq), 0.0, 1.0)
+            conf_scaled = clamp(raw_geom * (0.55 + 0.45 * conf), 0.0, 1.0)
 
-            alpha = 0.35
-            tr.risk_ema = alpha * raw + (1.0 - alpha) * tr.risk_ema
+            # Safer VQ scaling:
+            # do not let poor vision unrealistically suppress object risk to near-zero.
+            vq_scale = clamp(vq_risk_floor + (1.0 - vq_risk_floor) * vq, vq_risk_floor, 1.0)
+            raw = clamp(conf_scaled * vq_scale, 0.0, 1.0)
+
+            tr.risk_ema = risk_alpha * raw + (1.0 - risk_alpha) * tr.risk_ema
 
             comp = {
                 "prox": float(prox_combo),
                 "center": float(centrality),
                 "approach": float(approach),
                 "bconst": float(bearing_const),
+                "ttc_score": float(ttc_score),
                 "conf": float(conf),
+                "raw_geom": float(raw_geom),
+                "raw_conf": float(conf_scaled),
+                "vq_scale": float(vq_scale),
                 "raw": float(raw),
                 "ema": float(tr.risk_ema),
             }
@@ -1029,6 +1053,8 @@ class RiskEvaluatorNode(Node):
                 "bottom_y_ratio": float(bottom_y_ratio),
                 "area_ratio": float(area_ratio),
                 "in_corridor": bool(in_corridor),
+                "vttc_s": ttc_proxy,
+                "vttc_reason": ttc_reason,
             }
 
             ranked.append((float(tr.risk_ema), tr, comp, feat))
@@ -1041,30 +1067,6 @@ class RiskEvaluatorNode(Node):
 
         if top is None:
             return 0.0, None, metrics
-
-        # TTC proxy
-        a_th = float(self.get_parameter("ttc_area_threshold").value)
-        ttc_max = float(self.get_parameter("ttc_max_s").value)
-        area_ratio = float(top_feat.get("area_ratio", 0.0))
-
-        ttc_proxy = None
-        ttc_reason = "unknown"
-        if a_th <= 1e-9:
-            ttc_reason = "disabled"
-        else:
-            if area_ratio >= a_th:
-                ttc_proxy = 0.0
-                ttc_reason = "at_threshold"
-            else:
-                if top.dlog_area_dt > 1e-6:
-                    ttc = (
-                        math.log(max(a_th, 1e-9)) - math.log(max(area_ratio, 1e-9))
-                    ) / top.dlog_area_dt
-                    ttc = clamp(ttc, 0.0, ttc_max)
-                    ttc_proxy = float(ttc)
-                    ttc_reason = "ok"
-                else:
-                    ttc_reason = "no_approach"
 
         situation = self._classify_situation(
             bearing_deg=float(top.bearing_deg),
@@ -1090,6 +1092,7 @@ class RiskEvaluatorNode(Node):
         metrics.update(
             {
                 "risk": float(clamp(best, 0.0, 1.0)),
+                "risk_stage": self._risk_stage(clamp(best, 0.0, 1.0)),
                 "target": {
                     "track_id": int(top.tid),
                     "class_id": str(top.class_id),
@@ -1101,8 +1104,8 @@ class RiskEvaluatorNode(Node):
                     "bearing_deg": float(top.bearing_deg),
                     "bearing_rate_dps": float(top.bearing_rate_dps),
                     "dlog_area_dt": float(top.dlog_area_dt),
-                    "ttc_proxy_s": ttc_proxy,
-                    "ttc_reason": ttc_reason,
+                    "vttc_s": top_feat.get("vttc_s"),
+                    "vttc_reason": top_feat.get("vttc_reason", "unknown"),
                 },
                 "components": top_comp,
                 "situation": situation,
@@ -1128,19 +1131,48 @@ class RiskEvaluatorNode(Node):
             return "DIVERGING"
         return "UNKNOWN"
 
+    def _risk_stage(self, risk: float) -> str:
+        risk = clamp(risk, 0.0, 1.0)
+        if risk >= float(self.get_parameter("risk_stop_threshold").value):
+            return "EMERGENCY"
+        if risk >= float(self.get_parameter("risk_turn_threshold").value):
+            return "HIGH"
+        if risk >= float(self.get_parameter("risk_turn_slow_threshold").value):
+            return "MEDIUM"
+        if risk >= float(self.get_parameter("risk_slow_threshold").value):
+            return "LOW"
+        return "CLEAR"
+
+    def _dominant_factor(self, components: dict) -> str:
+        factor_map = {
+            "prox": "proximity",
+            "center": "centrality",
+            "approach": "approach",
+            "bconst": "bearing_consistency",
+            "ttc_score": "vttc",
+        }
+        best_k = None
+        best_v = -1.0
+        for k in ("prox", "center", "approach", "bconst", "ttc_score"):
+            v = float(components.get(k, -1.0))
+            if v > best_v:
+                best_k = k
+                best_v = v
+        return factor_map.get(best_k or "", "unknown")
+
     # --------------------------
     # Command + COLREG hint
     # --------------------------
     def _colregs_hint(self, situation: str) -> str:
         if situation == "HEAD_ON":
-            return "COLREG: HEAD-ON -> TURN STARBOARD"
+            return "COLREG_INSPIRED: HEAD-ON -> STARBOARD_BIAS"
         if situation == "CROSSING_RIGHT":
-            return "COLREG: GIVE-WAY (TARGET STARBOARD)"
+            return "COLREG_INSPIRED: GIVE-WAY_TO_STARBOARD_TARGET"
         if situation == "CROSSING_LEFT":
-            return "COLREG: STAND-ON (TARGET PORT)"
+            return "COLREG_INSPIRED: STAND-ON_PORT_TARGET"
         if situation == "DIVERGING":
-            return "COLREG: DIVERGING"
-        return "COLREG: UNKNOWN"
+            return "COLREG_INSPIRED: DIVERGING"
+        return "COLREG_INSPIRED: UNKNOWN"
 
     def _decide_command(self, t: float, risk: float, top: Optional[Track], metrics: dict) -> str:
         cmd_hold = str(self.get_parameter("cmd_hold").value)
@@ -1155,74 +1187,142 @@ class RiskEvaluatorNode(Node):
         exit_r = float(self.get_parameter("exit_avoid_risk").value)
         hold_s = float(self.get_parameter("min_cmd_hold_s").value)
 
+        risk_slow_th = float(self.get_parameter("risk_slow_threshold").value)
+        risk_turn_slow_th = float(self.get_parameter("risk_turn_slow_threshold").value)
+        risk_turn_th = float(self.get_parameter("risk_turn_threshold").value)
+        risk_stop_th = float(self.get_parameter("risk_stop_threshold").value)
+        vttc_turn_th = float(self.get_parameter("vttc_turn_threshold_s").value)
+        vttc_stop_th = float(self.get_parameter("vttc_stop_threshold_s").value)
+
         prefer_starboard = bool(self.get_parameter("prefer_starboard").value)
         emergency_turn_away = bool(self.get_parameter("emergency_turn_away").value)
 
-        # Legacy: vq_min as a minimum safety; if under this, never turn aggressively
         vq_min = float(self.get_parameter("vq_min").value)
         vq, _ = self._get_vq(t)
 
+        reason_codes: List[str] = []
+        decision_gate = "TRACK"
+
         if not self.avoid_mode and risk >= enter_r:
             self.avoid_mode = True
+            decision_gate = "ENTER_AVOID"
+            reason_codes.append("ENTER_AVOID")
         elif self.avoid_mode and risk <= exit_r:
             self.avoid_mode = False
+            decision_gate = "EXIT_AVOID"
+            reason_codes.append("EXIT_AVOID")
+        else:
+            decision_gate = "HOLD_AVOID" if self.avoid_mode else "TRACK"
 
         situation = str(metrics.get("situation", "UNKNOWN"))
         metrics["colregs"] = self._colregs_hint(situation)
+        metrics["decision_gate"] = decision_gate
 
-        # If vq is too low, force caution-like behavior even in NORMAL (extra safety)
         if vq < vq_min:
             desired = cmd_slow if risk > 0.25 else cmd_hold
             self._maybe_update_cmd(t, desired, hold_s)
             metrics["cmd"] = self.last_cmd
             metrics["vision_guard"] = "vq_below_vq_min"
+            metrics["reason_codes"] = reason_codes + ["VQ_BELOW_MIN"]
+            metrics["dominant_factor"] = self._dominant_factor(metrics.get("components", {}))
             return self.last_cmd
 
         if top is None:
             self._maybe_update_cmd(t, cmd_hold, hold_s)
             metrics["cmd"] = self.last_cmd
+            metrics["reason_codes"] = reason_codes + ["NO_TARGET"]
+            metrics["dominant_factor"] = "none"
             return self.last_cmd
 
-        if risk >= 0.92:
-            self._maybe_update_cmd(t, cmd_stop, hold_s)
-            metrics["cmd"] = self.last_cmd
-            return self.last_cmd
-
-        if (not self.avoid_mode) and risk < 0.45:
-            self._maybe_update_cmd(t, cmd_hold, hold_s)
-            metrics["cmd"] = self.last_cmd
-            return self.last_cmd
+        target_metrics = (
+            metrics.get("target", {}) if isinstance(metrics.get("target", {}), dict) else {}
+        )
+        vttc = target_metrics.get("vttc_s", None)
+        in_corridor = bool(target_metrics.get("in_corridor", False))
+        area_ratio = float(target_metrics.get("area_ratio", 0.0))
 
         W = float(self.image_w or 1)
         x_ratio = top.cx / max(W, 1e-9)
-        in_corridor = bool(metrics.get("target", {}).get("in_corridor", False))
 
         extreme = 0.82
-        area_ratio = float(metrics.get("target", {}).get("area_ratio", 0.0))
         near_area_ratio = float(self.get_parameter("near_area_ratio").value)
         very_close = area_ratio >= (near_area_ratio * 1.2)
+        urgent_vttc = (vttc is not None) and (float(vttc) <= vttc_turn_th)
+        emergency_vttc = (vttc is not None) and (float(vttc) <= vttc_stop_th)
 
-        direction = "RIGHT" if prefer_starboard else ("LEFT" if x_ratio > 0.5 else "RIGHT")
+        if emergency_vttc:
+            reason_codes.append("VTTC_EMERGENCY")
+        elif urgent_vttc:
+            reason_codes.append("VTTC_URGENT")
+        if in_corridor:
+            reason_codes.append("IN_CORRIDOR")
+        if very_close:
+            reason_codes.append("VERY_CLOSE")
+
+        # Determine maneuver side with encounter-aware bias
+        if situation in ("HEAD_ON", "CROSSING_RIGHT"):
+            direction = "RIGHT"
+            reason_codes.append(f"{situation}_STARBOARD_BIAS")
+        elif situation == "CROSSING_LEFT":
+            direction = "RIGHT" if prefer_starboard else "LEFT"
+            reason_codes.append("CROSSING_LEFT_STANDON_BIAS")
+        elif situation == "DIVERGING":
+            direction = "RIGHT" if prefer_starboard else ("LEFT" if x_ratio > 0.5 else "RIGHT")
+            reason_codes.append("DIVERGING_CONSERVATIVE")
+        else:
+            direction = "RIGHT" if prefer_starboard else ("LEFT" if x_ratio > 0.5 else "RIGHT")
+            reason_codes.append("UNKNOWN_DEFAULT_BIAS")
 
         if emergency_turn_away and very_close:
             if x_ratio > extreme:
                 direction = "LEFT"
+                reason_codes.append("EDGE_RIGHT_TURN_AWAY_LEFT")
             elif x_ratio < (1.0 - extreme):
                 direction = "RIGHT"
+                reason_codes.append("EDGE_LEFT_TURN_AWAY_RIGHT")
 
-        if risk < 0.55:
-            desired = cmd_slow
-        elif risk < 0.75:
-            desired = cmd_trs if direction == "RIGHT" else cmd_tls
+        desired = cmd_hold
+
+        if risk >= risk_stop_th or emergency_vttc:
+            desired = cmd_stop
+            reason_codes.append("EMERGENCY_STOP")
+        elif (not self.avoid_mode) and risk < risk_slow_th and (not urgent_vttc):
+            desired = cmd_hold
+            reason_codes.append("CLEAR_TRACK")
         else:
-            desired = cmd_tr if direction == "RIGHT" else cmd_tl
+            if situation == "DIVERGING" and risk < risk_turn_th and (not urgent_vttc):
+                desired = cmd_slow if risk >= risk_slow_th else cmd_hold
+                reason_codes.append("DIVERGING_NO_TURN")
+            elif situation == "CROSSING_LEFT" and risk < risk_turn_th and (not urgent_vttc):
+                # stand-on inspired: avoid overreacting to port-side crossing unless risk becomes high
+                desired = cmd_slow if (risk >= risk_slow_th or in_corridor) else cmd_hold
+                reason_codes.append("PORT_TARGET_CONSERVATIVE")
+            else:
+                if risk < risk_turn_slow_th and (not urgent_vttc):
+                    desired = cmd_slow
+                    reason_codes.append("LOW_SEVERITY_SLOW")
+                elif risk < risk_turn_th and (not very_close) and (not urgent_vttc):
+                    desired = cmd_trs if direction == "RIGHT" else cmd_tls
+                    reason_codes.append(f"TURN_SLOW_{direction}")
+                else:
+                    desired = cmd_tr if direction == "RIGHT" else cmd_tl
+                    reason_codes.append(f"TURN_{direction}")
 
-        if (not in_corridor) and risk < 0.70:
-            desired = cmd_slow
+            if (not in_corridor) and risk < risk_turn_th and (not urgent_vttc):
+                desired = cmd_slow
+                reason_codes.append("OFF_CORRIDOR_DEESCALATE")
 
         self._maybe_update_cmd(t, desired, hold_s)
         metrics["cmd"] = self.last_cmd
-        metrics["decision"] = {"direction": direction, "very_close": bool(very_close)}
+        metrics["decision"] = {
+            "direction": direction,
+            "very_close": bool(very_close),
+            "urgent_vttc": bool(urgent_vttc),
+            "emergency_vttc": bool(emergency_vttc),
+            "desired_cmd": desired,
+        }
+        metrics["reason_codes"] = reason_codes
+        metrics["dominant_factor"] = self._dominant_factor(metrics.get("components", {}))
         return self.last_cmd
 
     def _maybe_update_cmd(self, t: float, desired: str, hold_s: float) -> None:
@@ -1540,6 +1640,7 @@ class RiskEvaluatorNode(Node):
         situation = _ascii_safe(str(metrics.get("situation", "UNKNOWN")).replace("_", " "))
         vmode = _ascii_safe(str(metrics.get("vision_mode", self.mode)))
         colregs = _ascii_safe(str(metrics.get("colregs", "COLREG: --")))
+        dominant_factor = _ascii_safe(str(metrics.get("dominant_factor", "--")))
 
         det_dt = metrics.get("det_dt_ms", None)
         fps = metrics.get("fps", None)
@@ -1553,18 +1654,25 @@ class RiskEvaluatorNode(Node):
             else {}
         )
         topk = metrics.get("topk", []) if isinstance(metrics.get("topk", None), list) else []
+        reason_codes = (
+            metrics.get("reason_codes", [])
+            if isinstance(metrics.get("reason_codes", None), list)
+            else []
+        )
 
-        # extra health lines
         freeze = bool(metrics.get("freeze", False))
         fr = _ascii_safe(str(metrics.get("freeze_reason", "unknown")))
         img_age = float(metrics.get("img_age_s", 0.0))
+        risk_stage = _ascii_safe(str(metrics.get("risk_stage", "--")))
+        decision_gate = _ascii_safe(str(metrics.get("decision_gate", "--")))
 
         lines: List[str] = []
         lines.append(f"CMD: {cmd}")
         lines.append(f"MODE: {vmode}   AVOID: {'ON' if avoid else 'OFF'}")
         lines.append(f"VQ: {vq:.2f}   TRK: {ntrk}   DET: {det_dt_txt}   FPS: {fps_txt}")
         lines.append(f"IMG_AGE: {img_age:.2f}s   FREEZE: {str(freeze)}   REASON: {fr}")
-        lines.append(f"SITUATION: {situation}")
+        lines.append(f"SITUATION: {situation}   STAGE: {risk_stage}")
+        lines.append(f"GATE: {decision_gate}   DOM: {dominant_factor}")
         lines.append(f"{colregs}")
 
         if tg:
@@ -1578,23 +1686,23 @@ class RiskEvaluatorNode(Node):
             b = float(tg.get("bearing_deg", 0.0))
             br = float(tg.get("bearing_rate_dps", 0.0))
             dlog = float(tg.get("dlog_area_dt", 0.0))
-            ttc = tg.get("ttc_proxy_s", None)
-            treason = _ascii_safe(str(tg.get("ttc_reason", "")))
+            vttc = tg.get("vttc_s", None)
+            treason = _ascii_safe(str(tg.get("vttc_reason", "")))
 
-            if ttc is None:
+            if vttc is None:
                 if treason == "no_approach":
-                    ttc_txt = "-- (NO APPROACH)"
+                    vttc_txt = "-- (NO APPROACH)"
                 elif treason == "disabled":
-                    ttc_txt = "-- (OFF)"
+                    vttc_txt = "-- (OFF)"
                 else:
-                    ttc_txt = "--"
+                    vttc_txt = "--"
             else:
-                ttc_txt = f"{float(ttc):.1f}s"
+                vttc_txt = f"{float(vttc):.1f}s"
 
             lines.append(f"TARGET: id={tid} cls={cls} conf={conf:.2f} corridor={corridor}")
             lines.append(f"  x={x:.2f} bot={by:.2f} area={area:.3f}")
             lines.append(f"  brg={b:+.1f}deg  rate={br:+.1f}dps  dlog={dlog:+.2f}")
-            lines.append(f"  TCPA: {ttc_txt}")
+            lines.append(f"  vTTC: {vttc_txt}")
         else:
             lines.append("TARGET: --")
 
@@ -1603,7 +1711,13 @@ class RiskEvaluatorNode(Node):
             cen = float(comp.get("center", 0.0))
             app = float(comp.get("approach", 0.0))
             bc = float(comp.get("bconst", 0.0))
-            lines.append(f"COMP: prox={prox:.2f} cen={cen:.2f} app={app:.2f} bc={bc:.2f}")
+            ttc_s = float(comp.get("ttc_score", 0.0))
+            lines.append(
+                f"COMP: prox={prox:.2f} cen={cen:.2f} app={app:.2f} bc={bc:.2f} vttc={ttc_s:.2f}"
+            )
+
+        if reason_codes:
+            lines.append("WHY: " + ", ".join([_ascii_safe(str(x)) for x in reason_codes[:4]]))
 
         if topk:
             lines.append("TOP:")

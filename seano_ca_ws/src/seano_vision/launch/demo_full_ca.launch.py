@@ -140,6 +140,24 @@ def generate_launch_description():
     det_qos_depth = LaunchConfiguration("det_qos_depth")
 
     # -------------------------
+    # Detector runtime/config
+    # -------------------------
+    det_model_path = LaunchConfiguration("det_model_path")
+    det_device = LaunchConfiguration("det_device")
+    det_imgsz = LaunchConfiguration("det_imgsz")
+    det_conf = LaunchConfiguration("det_conf")
+    det_iou = LaunchConfiguration("det_iou")
+    det_class_ids = LaunchConfiguration("det_class_ids")
+    det_max_det = LaunchConfiguration("det_max_det")
+    det_agnostic_nms = LaunchConfiguration("det_agnostic_nms")
+    det_half = LaunchConfiguration("det_half")
+    det_warmup = LaunchConfiguration("det_warmup")
+    det_max_fps = LaunchConfiguration("det_max_fps")
+    det_publish_annotated = LaunchConfiguration("det_publish_annotated")
+    det_publish_detections = LaunchConfiguration("det_publish_detections")
+    det_publish_empty_detections = LaunchConfiguration("det_publish_empty_detections")
+
+    # -------------------------
     # FP Guard args
     # -------------------------
     fp_use_waterline = LaunchConfiguration("fp_use_waterline")
@@ -191,6 +209,22 @@ def generate_launch_description():
                 "sub_image": image_topic,
                 "pub_image": annotated_topic,
                 "pub_det": detections_raw_topic,
+                "publish_annotated": ParameterValue(det_publish_annotated, value_type=bool),
+                "publish_detections": ParameterValue(det_publish_detections, value_type=bool),
+                "publish_empty_detections": ParameterValue(
+                    det_publish_empty_detections, value_type=bool
+                ),
+                "model_path": det_model_path,
+                "device": det_device,
+                "imgsz": ParameterValue(det_imgsz, value_type=int),
+                "conf": ParameterValue(det_conf, value_type=float),
+                "iou": ParameterValue(det_iou, value_type=float),
+                "class_ids": det_class_ids,
+                "max_det": ParameterValue(det_max_det, value_type=int),
+                "agnostic_nms": ParameterValue(det_agnostic_nms, value_type=bool),
+                "half": ParameterValue(det_half, value_type=bool),
+                "warmup": ParameterValue(det_warmup, value_type=bool),
+                "max_fps": ParameterValue(det_max_fps, value_type=float),
                 "qos_depth": ParameterValue(det_qos_depth, value_type=int),
                 "sub_reliability": det_sub_reliability,
                 "pub_det_reliability": det_pub_reliability,
@@ -435,6 +469,26 @@ def generate_launch_description():
             DeclareLaunchArgument("det_sub_reliability", default_value="reliable"),
             DeclareLaunchArgument("det_pub_reliability", default_value="reliable"),
             DeclareLaunchArgument("det_qos_depth", default_value="10"),
+
+            # detector runtime/config
+            DeclareLaunchArgument("det_model_path", default_value="yolov8n.pt"),
+            DeclareLaunchArgument(
+                "det_device",
+                default_value="",
+                description="Empty string = auto device selection by Ultralytics",
+            ),
+            DeclareLaunchArgument("det_imgsz", default_value="416"),
+            DeclareLaunchArgument("det_conf", default_value="0.20"),
+            DeclareLaunchArgument("det_iou", default_value="0.45"),
+            DeclareLaunchArgument("det_class_ids", default_value="ALL"),
+            DeclareLaunchArgument("det_max_det", default_value="50"),
+            DeclareLaunchArgument("det_agnostic_nms", default_value="false"),
+            DeclareLaunchArgument("det_half", default_value="false"),
+            DeclareLaunchArgument("det_warmup", default_value="true"),
+            DeclareLaunchArgument("det_max_fps", default_value="8.0"),
+            DeclareLaunchArgument("det_publish_annotated", default_value="true"),
+            DeclareLaunchArgument("det_publish_detections", default_value="true"),
+            DeclareLaunchArgument("det_publish_empty_detections", default_value="true"),
 
             # FP guard args
             DeclareLaunchArgument("fp_use_waterline", default_value="true"),
