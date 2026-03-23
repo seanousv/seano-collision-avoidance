@@ -9,7 +9,7 @@ Default baseline:
 Default active path:
   (optional) camera include launch
   detector -> /camera/detections
-  risk_evaluator -> /ca/risk + /ca/command + /ca/mode + /ca/debug_image
+  risk_evaluator -> /ca/risk + /ca/command or /ca/command_safe + /ca/mode + /ca/debug_image
   watchdog_failsafe -> /ca/failsafe_active + /ca/failsafe_reason (+ status)
 
 Optional full-pipeline modules (disabled by default):
@@ -22,13 +22,27 @@ Optional full-pipeline modules (disabled by default):
 Viewer:
   showimage /ca/debug_image
   showimage /vision/waterline_debug
+
+Important compatibility notes:
+  - Hardware default behavior is preserved.
+  - Extra camera passthrough arguments are only used when:
+      camera_launch == phase2_camera_source_test.launch.py
+  - Effective command topic is auto-selected:
+      * explicit command_topic (if non-empty)
+      * /ca/command_safe for phase2_camera_source_test.launch.py
+      * /ca/command for other camera launches (hardware default)
 """
 
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration, PathJoinSubstitution, PythonExpression
+from launch.substitutions import (
+    EnvironmentVariable,
+    LaunchConfiguration,
+    PathJoinSubstitution,
+    PythonExpression,
+)
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 from launch_ros.substitutions import FindPackageShare
@@ -73,6 +87,32 @@ def _effective_risk_input_topic(
     )
 
 
+def _effective_command_topic(
+    explicit_topic: LaunchConfiguration,
+    camera_launch: LaunchConfiguration,
+) -> PythonExpression:
+    """
+    Pilih command topic secara aman:
+      1) kalau explicit command_topic diisi -> pakai itu
+      2) kalau camera launch = phase2_camera_source_test.launch.py
+         -> pakai /ca/command_safe (untuk simulasi / takeover manager)
+      3) selain itu -> pakai /ca/command (hardware default)
+    """
+    return PythonExpression(
+        [
+            "'",
+            explicit_topic,
+            "' if '",
+            explicit_topic,
+            "' != '' else (",
+            "'/ca/command_safe' if '",
+            camera_launch,
+            "' == 'phase2_camera_source_test.launch.py' else '/ca/command'",
+            ")",
+        ]
+    )
+
+
 def generate_launch_description():
     # -------------------------
     # Toggles
@@ -96,11 +136,82 @@ def generate_launch_description():
     camera_launch = LaunchConfiguration("camera_launch")
     pkg_share = FindPackageShare("seano_vision")
 
-    camera_include = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            PathJoinSubstitution([pkg_share, "launch", camera_launch])
+    # Extra passthrough args for phase2_camera_source_test.launch.py only.
+    # Defaults can be injected via environment variables so phase5 does not
+    # need to be edited just to switch from synthetic pattern to video file.
+    camera_profile = LaunchConfiguration("camera_profile")
+    camera_source = LaunchConfiguration("camera_source")
+    camera_backend = LaunchConfiguration("camera_backend")
+    camera_url = LaunchConfiguration("camera_url")
+    camera_pipeline = LaunchConfiguration("camera_pipeline")
+    camera_device_path = LaunchConfiguration("camera_device_path")
+    camera_device_index = LaunchConfiguration("camera_device_index")
+    camera_device_fourcc = LaunchConfiguration("camera_device_fourcc")
+    camera_device_width = LaunchConfiguration("camera_device_width")
+    camera_device_height = LaunchConfiguration("camera_device_height")
+    camera_device_fps = LaunchConfiguration("camera_device_fps")
+    camera_topic_best_effort = LaunchConfiguration("camera_topic_best_effort")
+    camera_topic_reliable = LaunchConfiguration("camera_topic_reliable")
+    camera_frame_id = LaunchConfiguration("camera_frame_id")
+    camera_max_fps = LaunchConfiguration("camera_max_fps")
+    camera_max_age_ms = LaunchConfiguration("camera_max_age_ms")
+    camera_record = LaunchConfiguration("camera_record")
+    camera_bag_base_dir = LaunchConfiguration("camera_bag_base_dir")
+    camera_bag_prefix = LaunchConfiguration("camera_bag_prefix")
+    camera_duration_s = LaunchConfiguration("camera_duration_s")
+
+    # Plain include: keep hardware baseline behavior unchanged
+    camera_include_plain = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(PathJoinSubstitution([pkg_share, "launch", camera_launch])),
+        condition=IfCondition(
+            PythonExpression(
+                [
+                    "'true' if ('",
+                    use_camera,
+                    "'.lower() == 'true' and '",
+                    camera_launch,
+                    "' != 'phase2_camera_source_test.launch.py') else 'false'",
+                ]
+            )
         ),
-        condition=IfCondition(use_camera),
+    )
+
+    # Passthrough include: only for the generic camera source test launch
+    camera_include_passthrough = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(PathJoinSubstitution([pkg_share, "launch", camera_launch])),
+        condition=IfCondition(
+            PythonExpression(
+                [
+                    "'true' if ('",
+                    use_camera,
+                    "'.lower() == 'true' and '",
+                    camera_launch,
+                    "' == 'phase2_camera_source_test.launch.py') else 'false'",
+                ]
+            )
+        ),
+        launch_arguments={
+            "profile": camera_profile,
+            "source": camera_source,
+            "backend": camera_backend,
+            "url": camera_url,
+            "pipeline": camera_pipeline,
+            "device_path": camera_device_path,
+            "device_index": camera_device_index,
+            "device_fourcc": camera_device_fourcc,
+            "device_width": camera_device_width,
+            "device_height": camera_device_height,
+            "device_fps": camera_device_fps,
+            "topic_best_effort": camera_topic_best_effort,
+            "topic_reliable": camera_topic_reliable,
+            "frame_id": camera_frame_id,
+            "max_fps": camera_max_fps,
+            "max_age_ms": camera_max_age_ms,
+            "record": camera_record,
+            "bag_base_dir": camera_bag_base_dir,
+            "bag_prefix": camera_bag_prefix,
+            "duration_s": camera_duration_s,
+        }.items(),
     )
 
     # -------------------------
@@ -183,7 +294,7 @@ def generate_launch_description():
     wd_start_in_failsafe = LaunchConfiguration("wd_start_in_failsafe")
 
     # -------------------------
-    # Effective risk input topic
+    # Effective topics
     # -------------------------
     effective_detections_for_risk_topic = _effective_risk_input_topic(
         explicit_topic=detections_for_risk_topic,
@@ -192,6 +303,11 @@ def generate_launch_description():
         detections_raw_topic=detections_raw_topic,
         detections_filtered_topic=detections_filtered_topic,
         detections_fused_topic=detections_fused_topic,
+    )
+
+    effective_command_topic = _effective_command_topic(
+        explicit_topic=command_topic,
+        camera_launch=camera_launch,
     )
 
     # -------------------------
@@ -353,7 +469,7 @@ def generate_launch_description():
                 "detections_topic": effective_detections_for_risk_topic,
                 "image_topic": image_topic,
                 "risk_topic": risk_topic,
-                "command_topic": command_topic,
+                "command_topic": effective_command_topic,
                 "mode_topic": mode_topic,
                 "metrics_topic": metrics_topic,
                 "debug_image_topic": debug_image_topic,
@@ -378,7 +494,7 @@ def generate_launch_description():
                 "image_topic": image_topic,
                 "detections_topic": detections_raw_topic,
                 "risk_topic": risk_topic,
-                "command_topic": command_topic,
+                "command_topic": effective_command_topic,
                 "mode_topic": mode_topic,
                 "startup_grace_s": ParameterValue(wd_startup_grace_s, value_type=float),
                 "start_in_failsafe": ParameterValue(wd_start_in_failsafe, value_type=bool),
@@ -418,19 +534,111 @@ def generate_launch_description():
             DeclareLaunchArgument("use_watchdog", default_value="true"),
             DeclareLaunchArgument("use_ca_viewer", default_value="false"),
             DeclareLaunchArgument("use_wl_viewer", default_value="false"),
-
-            # camera include - default tidak lagi ke kamera HP lama
+            # camera include - default hardware tetap
             DeclareLaunchArgument(
                 "camera_launch",
                 default_value="phase2_camera_usb_test.launch.py",
             ),
-
             # image topic - selaras dengan baseline hardware sekarang
             DeclareLaunchArgument(
                 "image_topic",
                 default_value="/seano/camera/image_raw_reliable",
             ),
-
+            # camera passthrough args
+            # Dipakai hanya saat camera_launch == phase2_camera_source_test.launch.py
+            # Default bisa diset dari environment variable supaya phase5 tidak perlu diubah.
+            DeclareLaunchArgument(
+                "camera_profile",
+                default_value=EnvironmentVariable("SEANO_CA_CAMERA_PROFILE", default_value=""),
+            ),
+            DeclareLaunchArgument(
+                "camera_source",
+                default_value=EnvironmentVariable("SEANO_CA_CAMERA_SOURCE", default_value=""),
+            ),
+            DeclareLaunchArgument(
+                "camera_backend",
+                default_value=EnvironmentVariable("SEANO_CA_CAMERA_BACKEND", default_value=""),
+            ),
+            DeclareLaunchArgument(
+                "camera_url",
+                default_value=EnvironmentVariable("SEANO_CA_CAMERA_URL", default_value=""),
+            ),
+            DeclareLaunchArgument(
+                "camera_pipeline",
+                default_value=EnvironmentVariable("SEANO_CA_CAMERA_PIPELINE", default_value=""),
+            ),
+            DeclareLaunchArgument(
+                "camera_device_path",
+                default_value=EnvironmentVariable("SEANO_CA_CAMERA_DEVICE_PATH", default_value=""),
+            ),
+            DeclareLaunchArgument(
+                "camera_device_index",
+                default_value=EnvironmentVariable("SEANO_CA_CAMERA_DEVICE_INDEX", default_value=""),
+            ),
+            DeclareLaunchArgument(
+                "camera_device_fourcc",
+                default_value=EnvironmentVariable(
+                    "SEANO_CA_CAMERA_DEVICE_FOURCC", default_value=""
+                ),
+            ),
+            DeclareLaunchArgument(
+                "camera_device_width",
+                default_value=EnvironmentVariable("SEANO_CA_CAMERA_DEVICE_WIDTH", default_value=""),
+            ),
+            DeclareLaunchArgument(
+                "camera_device_height",
+                default_value=EnvironmentVariable(
+                    "SEANO_CA_CAMERA_DEVICE_HEIGHT", default_value=""
+                ),
+            ),
+            DeclareLaunchArgument(
+                "camera_device_fps",
+                default_value=EnvironmentVariable("SEANO_CA_CAMERA_DEVICE_FPS", default_value=""),
+            ),
+            DeclareLaunchArgument(
+                "camera_topic_best_effort",
+                default_value=EnvironmentVariable(
+                    "SEANO_CA_CAMERA_TOPIC_BEST_EFFORT",
+                    default_value="/seano/camera/image_raw",
+                ),
+            ),
+            DeclareLaunchArgument(
+                "camera_topic_reliable",
+                default_value=EnvironmentVariable(
+                    "SEANO_CA_CAMERA_TOPIC_RELIABLE",
+                    default_value="/seano/camera/image_raw_reliable",
+                ),
+            ),
+            DeclareLaunchArgument(
+                "camera_frame_id",
+                default_value=EnvironmentVariable("SEANO_CA_CAMERA_FRAME_ID", default_value=""),
+            ),
+            DeclareLaunchArgument(
+                "camera_max_fps",
+                default_value=EnvironmentVariable("SEANO_CA_CAMERA_MAX_FPS", default_value=""),
+            ),
+            DeclareLaunchArgument(
+                "camera_max_age_ms",
+                default_value=EnvironmentVariable("SEANO_CA_CAMERA_MAX_AGE_MS", default_value=""),
+            ),
+            DeclareLaunchArgument(
+                "camera_record",
+                default_value=EnvironmentVariable("SEANO_CA_CAMERA_RECORD", default_value="false"),
+            ),
+            DeclareLaunchArgument(
+                "camera_bag_base_dir",
+                default_value=EnvironmentVariable("SEANO_CA_CAMERA_BAG_BASE_DIR", default_value=""),
+            ),
+            DeclareLaunchArgument(
+                "camera_bag_prefix",
+                default_value=EnvironmentVariable(
+                    "SEANO_CA_CAMERA_BAG_PREFIX", default_value="phase2_camera"
+                ),
+            ),
+            DeclareLaunchArgument(
+                "camera_duration_s",
+                default_value=EnvironmentVariable("SEANO_CA_CAMERA_DURATION_S", default_value="0"),
+            ),
             # topics
             DeclareLaunchArgument("annotated_topic", default_value="/camera/image_annotated"),
             DeclareLaunchArgument("detections_raw_topic", default_value="/camera/detections"),
@@ -442,13 +650,11 @@ def generate_launch_description():
                 "detections_fused_topic",
                 default_value="/camera/detections_fused",
             ),
-
             # kosong = auto select by enabled pipeline stage
             DeclareLaunchArgument(
                 "detections_for_risk_topic",
                 default_value="",
             ),
-
             DeclareLaunchArgument("waterline_topic", default_value="/vision/waterline_y"),
             DeclareLaunchArgument(
                 "waterline_debug_topic",
@@ -460,16 +666,18 @@ def generate_launch_description():
             DeclareLaunchArgument("freeze_score_topic", default_value="/vision/freeze_score"),
             DeclareLaunchArgument("freeze_reason_topic", default_value="/vision/freeze_reason"),
             DeclareLaunchArgument("risk_topic", default_value="/ca/risk"),
-            DeclareLaunchArgument("command_topic", default_value="/ca/command"),
+            DeclareLaunchArgument(
+                "command_topic",
+                default_value="",
+                description="Empty = auto-select (/ca/command for hardware, /ca/command_safe for phase2_camera_source_test)",
+            ),
             DeclareLaunchArgument("mode_topic", default_value="/ca/mode"),
             DeclareLaunchArgument("metrics_topic", default_value="/ca/metrics"),
             DeclareLaunchArgument("debug_image_topic", default_value="/ca/debug_image"),
-
             # detector QoS
             DeclareLaunchArgument("det_sub_reliability", default_value="reliable"),
             DeclareLaunchArgument("det_pub_reliability", default_value="reliable"),
             DeclareLaunchArgument("det_qos_depth", default_value="10"),
-
             # detector runtime/config
             DeclareLaunchArgument("det_model_path", default_value="yolov8n.pt"),
             DeclareLaunchArgument(
@@ -489,7 +697,6 @@ def generate_launch_description():
             DeclareLaunchArgument("det_publish_annotated", default_value="true"),
             DeclareLaunchArgument("det_publish_detections", default_value="true"),
             DeclareLaunchArgument("det_publish_empty_detections", default_value="true"),
-
             # FP guard args
             DeclareLaunchArgument("fp_use_waterline", default_value="true"),
             DeclareLaunchArgument("fp_waterline_margin_px", default_value="15"),
@@ -499,18 +706,16 @@ def generate_launch_description():
             DeclareLaunchArgument("fp_min_hits", default_value="3"),
             DeclareLaunchArgument("fp_iou_match", default_value="0.35"),
             DeclareLaunchArgument("fp_max_miss", default_value="4"),
-
             # fusion args
             DeclareLaunchArgument("fusion_enabled", default_value="true"),
             DeclareLaunchArgument("fusion_mode", default_value="topk"),
             DeclareLaunchArgument("fusion_top_k", default_value="3"),
-
             # watchdog args
             DeclareLaunchArgument("wd_startup_grace_s", default_value="3.0"),
             DeclareLaunchArgument("wd_start_in_failsafe", default_value="false"),
-
             # actions
-            camera_include,
+            camera_include_plain,
+            camera_include_passthrough,
             detector_node,
             waterline_node,
             fp_guard_node,
