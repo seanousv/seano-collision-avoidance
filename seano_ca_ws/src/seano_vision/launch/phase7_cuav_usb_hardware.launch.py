@@ -235,8 +235,11 @@ def generate_launch_description():
     failsafe_mode = LaunchConfiguration("failsafe_mode")
 
     cruise_speed = LaunchConfiguration("cruise_speed")
+    slow_factor = LaunchConfiguration("slow_factor")
+    turn_speed_factor = LaunchConfiguration("turn_speed_factor")
     turn_cmd = LaunchConfiguration("turn_cmd")
     diff_mix_gain = LaunchConfiguration("diff_mix_gain")
+    speed_max = LaunchConfiguration("speed_max")
 
     # ------------------------------------------------------------------
     # Includes
@@ -486,8 +489,11 @@ def generate_launch_description():
                     master_enable_on_start, value_type=bool
                 ),
                 "cruise_speed": ParameterValue(cruise_speed, value_type=float),
+                "slow_factor": ParameterValue(slow_factor, value_type=float),
+                "turn_speed_factor": ParameterValue(turn_speed_factor, value_type=float),
                 "turn_cmd": ParameterValue(turn_cmd, value_type=float),
                 "diff_mix_gain": ParameterValue(diff_mix_gain, value_type=float),
+                "speed_max": ParameterValue(speed_max, value_type=float),
             }
         ],
     )
@@ -768,8 +774,11 @@ def generate_launch_description():
 
         # takeover tuning
         DeclareLaunchArgument("cruise_speed", default_value="0.30"),
-        DeclareLaunchArgument("turn_cmd", default_value="0.55"),
-        DeclareLaunchArgument("diff_mix_gain", default_value="0.7"),
+        DeclareLaunchArgument("slow_factor", default_value="0.55"),
+        DeclareLaunchArgument("turn_speed_factor", default_value="0.75"),
+        DeclareLaunchArgument("turn_cmd", default_value="0.50"),
+        DeclareLaunchArgument("diff_mix_gain", default_value="0.65"),
+        DeclareLaunchArgument("speed_max", default_value="0.55"),
     ]
 
     actions = [

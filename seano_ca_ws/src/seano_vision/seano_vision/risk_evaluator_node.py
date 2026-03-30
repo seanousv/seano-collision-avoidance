@@ -230,12 +230,12 @@ class RiskEvaluatorNode(Node):
         self.declare_parameter("max_tracks", 30)
 
         # Camera proxy
-        self.declare_parameter("camera_hfov_deg", 70.0)
+        self.declare_parameter("camera_hfov_deg", 112.96)
 
         # Domain
-        self.declare_parameter("center_band_ratio", 0.30)
-        self.declare_parameter("bottom_danger_ratio", 0.65)
-        self.declare_parameter("near_area_ratio", 0.08)
+        self.declare_parameter("center_band_ratio", 0.212)
+        self.declare_parameter("bottom_danger_ratio", 0.647)
+        self.declare_parameter("near_area_ratio", 0.0183)
 
         # Risk weights
         self.declare_parameter("w_proximity", 0.40)
