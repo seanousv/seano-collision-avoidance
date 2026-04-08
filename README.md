@@ -68,6 +68,20 @@ Related bench/debug launches:
 - [`demo_risk.launch.py`](seano_ca_ws/src/seano_vision/launch/demo_risk.launch.py)
 - [`demo_full_ca.launch.py`](seano_ca_ws/src/seano_vision/launch/demo_full_ca.launch.py)
 
+## 1.3 Current Thesis Baseline Status
+This repository should currently be read as an **active thesis baseline repository**, not only as a general experiment workspace.
+
+Current interpretation of the baseline:
+
+- **Simulation evidence** is centered on `phase5_mission_avoid_integration.launch.py`
+- **Hardware / bench evidence** is centered on `phase7_cuav_usb_hardware.launch.py`
+- active launch filenames are intentionally kept stable until the thesis baseline and field validation are locked
+
+Supporting documents for the current thesis status:
+
+- [Thesis Progress Status](docs/THESIS_PROGRESS_STATUS.md)
+- [Baseline Parameter Lock](docs/BASELINE_PARAMETER_LOCK.md)
+
 ---
 
 # 2. Vehicle Constraint and Control Philosophy
@@ -97,6 +111,8 @@ seano-collision-avoidance/
 │   ├── ARCHITECTURE.md
 │   ├── HARDWARE_BENCH_RESULTS.md
 │   ├── LAUNCH_STATUS_MAP.md
+│   ├── THESIS_PROGRESS_STATUS.md
+│   ├── BASELINE_PARAMETER_LOCK.md
 │   ├── PHASE6_RESULTS_SUMMARY.md
 │   ├── PHASE6_TEST_MATRIX.md
 │   └── RUNBOOK.md
@@ -170,7 +186,7 @@ Useful entry points:
 * [`command_mux_node.py`](seano_ca_ws/src/seano_vision/seano_vision/command_mux_node.py)
 * [`actuator_safety_limiter_node.py`](seano_ca_ws/src/seano_vision/seano_vision/actuator_safety_limiter_node.py)
 * [`mavros_rc_override_bridge_node.py`](seano_ca_ws/src/seano_vision/seano_vision/mavros_rc_override_bridge_node.py)
-* [`auto_controller_stub_node.py`](seano_ca_ws/src/seano_vision/seano_vision/auto_controller_stub_node.py)
+* [`auto_controller_stub_node.py`](seano_ca_ws/src/seano_vision/seano_vision/auto_controller_stub_node.py) - runtime role: auto takeover manager (filename retained for compatibility with the active baseline)
 
 ## 5.3 Mission / Mode
 
@@ -613,6 +629,8 @@ Expected behavior:
 * [Architecture](docs/ARCHITECTURE.md)
 * [Phase 6 Test Matrix](docs/PHASE6_TEST_MATRIX.md)
 * [Phase 6 Results Summary](docs/PHASE6_RESULTS_SUMMARY.md)
+* [Thesis Progress Status](docs/THESIS_PROGRESS_STATUS.md)
+* [Baseline Parameter Lock](docs/BASELINE_PARAMETER_LOCK.md)
 
 ---
 
