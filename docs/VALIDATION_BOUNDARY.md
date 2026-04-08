@@ -53,8 +53,9 @@ Boleh diklaim bahwa:
 - command chain aktif,
 - MAVROS aktif,
 - FCU nyata terhubung,
-- Mission Planner dapat dimasukkan ke jalur bench,
-- monitoring raw / annotated / HUD dapat dipakai.
+- Mission Planner dapat divalidasi di jalur bench,
+- monitoring raw / annotated / HUD dapat dipakai,
+- baseline hardware saat ini sudah cukup kuat untuk dibaca sebagai **integration-level evidence** pada platform target.
 
 ---
 
@@ -64,7 +65,9 @@ Belum boleh diklaim bahwa:
 - obstacle avoidance lapangan sudah final,
 - release + rejoin lapangan sudah konsisten,
 - mission completion setelah real obstacle avoidance sudah tervalidasi penuh,
-- tuning dinamik kapal sudah final.
+- tuning dinamik kapal sudah final,
+- kepatuhan penuh terhadap seluruh ketentuan COLREGs sudah terbukti,
+- sistem sudah siap diklaim sebagai full on-water operational deployment.
 
 ---
 
@@ -88,8 +91,8 @@ Kekuatan proyek saat ini ada pada:
 - konsistensi arsitektur mission-aware.
 
 Batasnya ada pada:
-- belum lengkapnya field validation,
-- belum finalnya parameter dinamik kapal,
+- controlled field validation yang belum lengkap,
+- parameter dinamik kapal yang belum final,
 - sensitivitas perception nyata terhadap lingkungan lapangan.
 
 ---
