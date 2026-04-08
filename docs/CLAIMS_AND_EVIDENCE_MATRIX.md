@@ -71,6 +71,7 @@ Status yang dipakai:
 **Batas klaim**:
 - ini adalah klaim **integrasi hardware bench**,
   belum berarti obstacle avoidance lapangan sudah final.
+- jalur command hardware aktif sekarang mengikuti watchdog-conditioned command stream sebagai baseline default.
 
 ---
 
@@ -121,6 +122,21 @@ Status yang dipakai:
 **Batas klaim**:
 - ini adalah klaim tentang **mekanisme safety architecture**,
   bukan jaminan semua skenario lapangan sudah tertangani.
+
+---
+
+### Claim G — Sistem sudah memenuhi kepatuhan penuh terhadap seluruh ketentuan COLREGs
+
+**Status**: `NOT_READY_TO_CLAIM`
+
+**Evidence minimum yang dibutuhkan**:
+- definisi skenario encounter yang lengkap,
+- bukti keputusan manuver pada skenario head-on, crossing, dan overtaking,
+- evidence simulasi dan lapangan yang cukup untuk tiap kategori,
+- justifikasi operasional bahwa perilaku sistem konsisten terhadap batas ruang lingkup penelitian.
+
+**Batas klaim**:
+- pada baseline saat ini, sistem hanya boleh diklaim mengacu pada prinsip dasar COLREGs, belum membuktikan kepatuhan penuh terhadap seluruh ketentuan COLREGs.
 
 ---
 
@@ -180,7 +196,7 @@ Matrix ini menegaskan bahwa repo SEANO saat ini sudah cukup kuat untuk mengklaim
 - implementasi arsitektur,
 - keberhasilan baseline simulasi,
 - keberhasilan integrasi hardware bench,
-- dan kesiapan menuju pengujian lapangan terkontrol.
+- dan kesiapan menuju controlled field validation yang terbatas.
 
 Namun repo ini belum boleh dipakai untuk mengklaim:
 - keberhasilan penuh end-to-end lapangan secara final dan berulang,
