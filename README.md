@@ -69,23 +69,16 @@ Related bench/debug launches:
 - [`demo_full_ca.launch.py`](seano_ca_ws/src/seano_vision/launch/demo_full_ca.launch.py)
 
 ## 1.3 Current Thesis Baseline Status
+
 This repository should currently be read as an **active thesis baseline repository**, not only as a general experiment workspace.
 
 Current interpretation of the baseline:
 
 - **Simulation evidence** is centered on `phase5_mission_avoid_integration.launch.py`
 - **Hardware / bench evidence** is centered on `phase7_cuav_usb_hardware.launch.py`
-- active launch filenames are intentionally kept stable until the thesis baseline and field validation are locked
+- active launch filenames are intentionally kept stable until the thesis baseline and controlled field validation are locked
 
-Supporting documents for the current thesis status:
-
-- [Thesis Progress Status](docs/THESIS_PROGRESS_STATUS.md)
-- [Baseline Parameter Lock](docs/BASELINE_PARAMETER_LOCK.md)
-
-
-## 1.4 Thesis Baseline Support Documents
-
-The following documents should be read together when using this repository as a thesis baseline:
+Supporting documents:
 
 - [Thesis Progress Status](docs/THESIS_PROGRESS_STATUS.md)
 - [Baseline Parameter Lock](docs/BASELINE_PARAMETER_LOCK.md)
@@ -176,7 +169,7 @@ Useful entry points:
 
 * [`phase5_mission_avoid_integration.launch.py`](seano_ca_ws/src/seano_vision/launch/phase5_mission_avoid_integration.launch.py)
 
-## 4.2 Use This for Full Hardware / Field Test
+## 4.2 Use This for Active Hardware Integration / Controlled Field Test Preparation
 
 * [`phase7_cuav_usb_hardware.launch.py`](seano_ca_ws/src/seano_vision/launch/phase7_cuav_usb_hardware.launch.py)
 
