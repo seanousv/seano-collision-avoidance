@@ -68,6 +68,37 @@ Related bench/debug launches:
 - [`demo_risk.launch.py`](seano_ca_ws/src/seano_vision/launch/demo_risk.launch.py)
 - [`demo_full_ca.launch.py`](seano_ca_ws/src/seano_vision/launch/demo_full_ca.launch.py)
 
+## 1.3 Current Thesis Baseline Status
+This repository should currently be read as an **active thesis baseline repository**, not only as a general experiment workspace.
+
+Current interpretation of the baseline:
+
+- **Simulation evidence** is centered on `phase5_mission_avoid_integration.launch.py`
+- **Hardware / bench evidence** is centered on `phase7_cuav_usb_hardware.launch.py`
+- active launch filenames are intentionally kept stable until the thesis baseline and field validation are locked
+
+Supporting documents for the current thesis status:
+
+- [Thesis Progress Status](docs/THESIS_PROGRESS_STATUS.md)
+- [Baseline Parameter Lock](docs/BASELINE_PARAMETER_LOCK.md)
+
+
+## 1.4 Thesis Baseline Support Documents
+
+The following documents should be read together when using this repository as a thesis baseline:
+
+- [Thesis Progress Status](docs/THESIS_PROGRESS_STATUS.md)
+- [Baseline Parameter Lock](docs/BASELINE_PARAMETER_LOCK.md)
+- [Validation Boundary](docs/VALIDATION_BOUNDARY.md)
+
+These documents help distinguish:
+
+- what is already strong enough to be treated as current thesis baseline evidence,
+- what is already locked as design-level baseline values,
+- and what is still runtime-tunable or still awaiting controlled field validation.
+
+---
+
 ---
 
 # 2. Vehicle Constraint and Control Philosophy
@@ -97,6 +128,8 @@ seano-collision-avoidance/
 │   ├── ARCHITECTURE.md
 │   ├── HARDWARE_BENCH_RESULTS.md
 │   ├── LAUNCH_STATUS_MAP.md
+│   ├── THESIS_PROGRESS_STATUS.md
+│   ├── BASELINE_PARAMETER_LOCK.md
 │   ├── PHASE6_RESULTS_SUMMARY.md
 │   ├── PHASE6_TEST_MATRIX.md
 │   └── RUNBOOK.md
@@ -170,7 +203,7 @@ Useful entry points:
 * [`command_mux_node.py`](seano_ca_ws/src/seano_vision/seano_vision/command_mux_node.py)
 * [`actuator_safety_limiter_node.py`](seano_ca_ws/src/seano_vision/seano_vision/actuator_safety_limiter_node.py)
 * [`mavros_rc_override_bridge_node.py`](seano_ca_ws/src/seano_vision/seano_vision/mavros_rc_override_bridge_node.py)
-* [`auto_controller_stub_node.py`](seano_ca_ws/src/seano_vision/seano_vision/auto_controller_stub_node.py)
+* [`auto_controller_stub_node.py`](seano_ca_ws/src/seano_vision/seano_vision/auto_controller_stub_node.py) - runtime role: auto takeover manager (filename retained for compatibility with the active baseline)
 
 ## 5.3 Mission / Mode
 
@@ -613,6 +646,26 @@ Expected behavior:
 * [Architecture](docs/ARCHITECTURE.md)
 * [Phase 6 Test Matrix](docs/PHASE6_TEST_MATRIX.md)
 * [Phase 6 Results Summary](docs/PHASE6_RESULTS_SUMMARY.md)
+* [Thesis Progress Status](docs/THESIS_PROGRESS_STATUS.md)
+* [Baseline Parameter Lock](docs/BASELINE_PARAMETER_LOCK.md)
+
+---
+
+
+# 11A. Thesis Documentation Map
+
+For thesis-facing review and defense preparation, use these companion documents:
+
+* [Thesis Repo Index](docs/THESIS_REPO_INDEX.md)
+* [Claims and Evidence Matrix](docs/CLAIMS_AND_EVIDENCE_MATRIX.md)
+* [Validation Boundary](docs/VALIDATION_BOUNDARY.md)
+* [Baseline Parameter Lock](docs/BASELINE_PARAMETER_LOCK.md)
+* [Active Runtime File Matrix](docs/ACTIVE_RUNTIME_FILE_MATRIX.md)
+* [Active Topic Flow](docs/ACTIVE_TOPIC_FLOW.md)
+* [Field Test Evidence Checklist](docs/FIELD_TEST_EVIDENCE_CHECKLIST.md)
+* [Post-Field Refactor Plan](docs/POST_FIELD_REFACTOR_PLAN.md)
+
+These documents are intended to keep the repository readable as an active thesis baseline, not only as a development workspace.
 
 ---
 

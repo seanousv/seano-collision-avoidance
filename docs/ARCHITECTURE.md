@@ -261,6 +261,109 @@ stateDiagram-v2
 
 ---
 
+## 6.1 Hierarki State yang Harus Dibaca Terpisah
+
+Agar tidak terjadi kebingungan saat pembacaan kode, hasil uji, atau penulisan laporan, repository ini memiliki **tiga level state** yang berbeda. Ketiganya saling berkaitan, tetapi **tidak boleh disamakan**.
+
+### a. State persepsi di `risk_evaluator_node.py`
+
+State ini menggambarkan kesehatan dan kualitas persepsi pada level evaluator risiko:
+
+- `NORMAL`
+- `CAUTION`
+- `LOST_PERCEPTION`
+
+Maknanya:
+- `NORMAL` = persepsi dianggap sehat
+- `CAUTION` = persepsi masih hidup tetapi kualitas menurun, sehingga keputusan perlu dideeskalasi
+- `LOST_PERCEPTION` = persepsi tidak cukup dipercaya dan command avoidance dipaksa aman
+
+### b. State watchdog di `watchdog_failsafe_node.py`
+
+State ini adalah state pengaman operasional watchdog:
+
+- `NORMAL`
+- `CAUTION`
+- `LOST`
+
+Maknanya:
+- `NORMAL` = jalur input dianggap sehat
+- `CAUTION` = jalur masih hidup tetapi tidak cukup baik untuk keputusan agresif
+- `LOST` = jalur dianggap tidak layak dipercaya dan watchdog menaikkan failsafe
+
+### c. State mission/autopilot di `mission_mode_manager_node.py`
+
+State ini adalah state formal untuk mission handling dan autopilot mode restore:
+
+- `MISSION`
+- `AVOID`
+- `REJOIN`
+- `FAILSAFE`
+
+Maknanya:
+- `MISSION` = autopilot menjalankan mission normal
+- `AVOID` = takeover collision avoidance aktif
+- `REJOIN` = takeover sudah dilepas dan sistem sedang memulihkan mission mode secara formal
+- `FAILSAFE` = sistem masuk mode aman dari sudut pandang mission/autopilot
+
+### d. Hubungan antarketiga level state
+
+Cara membacanya adalah sebagai berikut:
+
+- state persepsi menentukan apakah evaluator risiko masih boleh menghasilkan keputusan normal
+- state watchdog menentukan apakah jalur persepsi masih cukup sehat untuk diizinkan mengontrol avoidance
+- state mission/autopilot menentukan bagaimana FCU harus dibaca pada level `MISSION / AVOID / REJOIN / FAILSAFE`
+
+Dengan kata lain:
+
+- `LOST_PERCEPTION` pada evaluator **bukan** nama state yang sama dengan `FAILSAFE` pada mission manager
+- `LOST` pada watchdog **bukan** nama state yang sama dengan `REJOIN` atau `AVOID`
+- mission manager bekerja pada level lebih tinggi, yaitu mode dan pemulihan mission
+
+Penjelasan ini penting untuk sidang, interpretasi rosbag, dan sinkronisasi antara kode, laporan, dan jurnal.
+
+
+## 6.1 Hierarki state antar-layer
+
+Untuk menghindari kebingungan, state pada repo ini harus dibaca sebagai **state multi-layer**, bukan satu daftar state tunggal.
+
+### Layer perception / risk
+Contoh state:
+- `NORMAL`
+- `CAUTION`
+- `LOST_PERCEPTION`
+
+Makna:
+- layer ini menilai **kesehatan persepsi** dan **kesiapan visual**.
+
+### Layer watchdog
+Contoh state:
+- `NORMAL`
+- `CAUTION`
+- `LOST`
+
+Makna:
+- layer ini menentukan apakah jalur persepsi masih cukup sehat untuk diizinkan mengontrol avoidance.
+
+### Layer mission / autopilot
+State formal utama:
+- `MISSION`
+- `AVOID`
+- `REJOIN`
+- `FAILSAFE`
+
+Makna:
+- layer ini menentukan bagaimana FCU dan jalur mission harus dibaca serta dipulihkan.
+
+### Ringkasan interpretasi
+- `LOST_PERCEPTION` pada layer perception **bukan** nama state yang sama dengan `FAILSAFE` pada mission manager,
+- `LOST` pada watchdog **bukan** nama state yang sama dengan `REJOIN` atau `AVOID`,
+- mission manager bekerja pada level lebih tinggi, yaitu mode autopilot dan pemulihan mission.
+
+Pemisahan ini penting untuk sidang, interpretasi rosbag, dan sinkronisasi antara kode, laporan, dan jurnal.
+
+---
+
 ## 7. Layer dan Tanggung Jawab
 
 ## 7.1 Mission / Autopilot Layer

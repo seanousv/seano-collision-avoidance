@@ -1,5 +1,18 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+# THESIS_ACTIVE_SIM_BASELINE
+#
+# This launch is the active simulation baseline for the thesis.
+# It should be read as the primary SITL evidence entry point for:
+# - mission -> avoid -> rejoin -> mission validation,
+# - rosbag collection,
+# - Phase 6 metrics extraction,
+# - controlled logic verification before hardware testing.
+#
+# Operational note:
+# - keep filename stable while thesis baseline and field evidence are still being locked.
+# - prefer documenting profile usage and parameters over renaming the file.
+#
 
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, ExecuteProcess, IncludeLaunchDescription

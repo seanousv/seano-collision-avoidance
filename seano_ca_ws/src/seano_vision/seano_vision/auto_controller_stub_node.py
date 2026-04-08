@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-AUTO Takeover Manager (replaces old auto_controller_stub_node)
+AUTO Takeover Manager (entrypoint retained as auto_controller_stub_node for active baseline compatibility)
 
 Tujuan (untuk uji autonomous minggu depan):
 - Monitor /ca/command (dari risk_evaluator) dan /ca/failsafe_active (dari watchdog)
@@ -14,6 +14,8 @@ Output ke stack aktuasi (sesuai arsitektur repo):
 - /seano/rc_override_enable (Bool) -> bridge apply/release RC override
 
 Catatan penting:
+- Filename `auto_controller_stub_node.py` masih dipertahankan agar kompatibel dengan launch aktif repo.
+- Peran runtime node ini sekarang harus dibaca sebagai **auto takeover manager**, bukan stub dummy sederhana.
 - Pada FAILSAFE (kamera/perception gagal): node memaksa STOP dengan takeover aktif
   (JANGAN release mission saat perception fail).
 """

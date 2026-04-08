@@ -535,3 +535,17 @@ Status hardware proyek SEANO saat ini paling tepat diringkas sebagai:
 Dengan kata lain:
 
 **proyek ini sudah melewati proof-of-concept simulasi, masuk ke bench hardware fungsional, dan sedang menuju pembuktian field collision avoidance yang terkontrol.**
+
+---
+
+## 14.1 Dokumen pendamping yang harus dibaca bersama
+
+Untuk membaca status hardware bench dengan benar, gunakan dokumen ini bersama:
+
+- `docs/THESIS_PROGRESS_STATUS.md`
+- `docs/BASELINE_PARAMETER_LOCK.md`
+- `docs/VALIDATION_BOUNDARY.md`
+
+Tujuannya agar hasil hardware bench tidak:
+- diremehkan sebagai sekadar demo lokal,
+- maupun dilebihkan seolah-olah semua validasi lapangan sudah final.

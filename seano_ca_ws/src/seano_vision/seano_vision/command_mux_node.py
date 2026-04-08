@@ -9,12 +9,17 @@ Tujuan:
   MANUAL: /seano/manual/left_cmd  + /seano/manual/right_cmd
   AUTO  : /seano/auto/left_cmd    + /seano/auto/right_cmd
 - Memilih salah satu (default MANUAL) berdasarkan /seano/auto_enable (Bool)
-- Mengeluarkan perintah terpilih ke:
-  OUT   : /seano/left_cmd         + /seano/right_cmd
+- Mengeluarkan perintah terpilih ke default output aktif:
+  OUT   : /seano/selected/left_cmd  + /seano/selected/right_cmd
+
+Catatan arsitektur:
+- Node ini adalah pemilih sumber command, bukan final actuator output.
+- Output node ini normalnya masuk dulu ke `actuator_safety_limiter_node`.
+- Final command ke bridge MAVROS tetap berada pada `/seano/left_cmd` dan `/seano/right_cmd` setelah limiter.
 
 Kenapa penting:
 - Teleop, AI avoidance, atau controller lain cukup publish ke topik inputnya.
-- Bridge MAVROS hanya listen satu pasang topik output (stabil).
+- Bridge MAVROS tetap menerima satu jalur command akhir yang stabil setelah melewati limiter.
 """
 
 from dataclasses import dataclass

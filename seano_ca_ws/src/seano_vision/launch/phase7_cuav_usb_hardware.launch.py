@@ -1,9 +1,25 @@
 # -*- coding: utf-8 -*-
+# THESIS_ACTIVE_HW_BASELINE
+#
+# This launch is the active hardware baseline for the thesis.
+# It should be read as the primary Jetson + CUAV + USB camera entry point for:
+# - hardware bench integration,
+# - dockside preparation,
+# - controlled field-test preparation,
+# - full runtime monitoring with MAVROS and browser-based HUD.
+#
+# Operational note:
+# - keep filename stable while the field baseline is still being validated.
+# - treat parameter changes carefully and record them in docs/BASELINE_PARAMETER_LOCK.md.
+#
 
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, ExecuteProcess, IncludeLaunchDescription
 from launch.conditions import IfCondition
-from launch.launch_description_sources import AnyLaunchDescriptionSource, PythonLaunchDescriptionSource
+from launch.launch_description_sources import (
+    AnyLaunchDescriptionSource,
+    PythonLaunchDescriptionSource,
+)
 from launch.substitutions import (
     EnvironmentVariable,
     LaunchConfiguration,
@@ -13,7 +29,6 @@ from launch.substitutions import (
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 from launch_ros.substitutions import FindPackageShare
-
 
 DEFAULT_USB_DEVICE_PATH = "/dev/v4l/by-id/usb-FEC_NYK_NEMESIS_202001010001-video-index0"
 
@@ -245,9 +260,7 @@ def generate_launch_description():
     # Includes
     # ------------------------------------------------------------------
     mavros_include = IncludeLaunchDescription(
-        AnyLaunchDescriptionSource(
-            PathJoinSubstitution([mavros_share, "launch", "apm.launch"])
-        ),
+        AnyLaunchDescriptionSource(PathJoinSubstitution([mavros_share, "launch", "apm.launch"])),
         condition=IfCondition(use_mavros),
         launch_arguments={
             "fcu_url": fcu_url,
@@ -290,7 +303,9 @@ def generate_launch_description():
             PathJoinSubstitution([pkg_share, "launch", "phase2_camera_source_test.launch.py"])
         ),
         condition=IfCondition(
-            _camera_launch_is(ca_use_camera, ca_camera_launch, "phase2_camera_source_test.launch.py")
+            _camera_launch_is(
+                ca_use_camera, ca_camera_launch, "phase2_camera_source_test.launch.py"
+            )
         ),
         launch_arguments={
             "profile": ca_camera_profile,
@@ -419,9 +434,7 @@ def generate_launch_description():
                 ),
                 "allow_reverse": ParameterValue(allow_reverse, value_type=bool),
                 "input_timeout_s": ParameterValue(limiter_input_timeout_s, value_type=float),
-                "failsafe_timeout_s": ParameterValue(
-                    limiter_failsafe_timeout_s, value_type=float
-                ),
+                "failsafe_timeout_s": ParameterValue(limiter_failsafe_timeout_s, value_type=float),
                 "loop_hz": ParameterValue(limiter_loop_hz, value_type=float),
                 "reason_topic": "/seano/limiter_reason",
             }
@@ -460,9 +473,7 @@ def generate_launch_description():
                     bridge_pwm_slew_rate_us_per_s, value_type=float
                 ),
                 "pub_hz": ParameterValue(bridge_pub_hz, value_type=float),
-                "command_timeout_s": ParameterValue(
-                    bridge_command_timeout_s, value_type=float
-                ),
+                "command_timeout_s": ParameterValue(bridge_command_timeout_s, value_type=float),
             }
         ],
     )
@@ -485,9 +496,7 @@ def generate_launch_description():
                 "auto_enable_topic": "/seano/auto_enable",
                 "rc_override_enable_topic": "/seano/rc_override_enable",
                 "master_enable_topic": "/seano/auto_master_enable",
-                "master_enable_on_start": ParameterValue(
-                    master_enable_on_start, value_type=bool
-                ),
+                "master_enable_on_start": ParameterValue(master_enable_on_start, value_type=bool),
                 "cruise_speed": ParameterValue(cruise_speed, value_type=float),
                 "slow_factor": ParameterValue(slow_factor, value_type=float),
                 "turn_speed_factor": ParameterValue(turn_speed_factor, value_type=float),
@@ -586,7 +595,6 @@ def generate_launch_description():
         DeclareLaunchArgument("use_ca_pipeline", default_value="true"),
         DeclareLaunchArgument("use_takeover_manager", default_value="true"),
         DeclareLaunchArgument("use_mode_manager", default_value="true"),
-
         # MAVROS
         DeclareLaunchArgument("mavros_namespace", default_value="mavros"),
         DeclareLaunchArgument(
@@ -599,7 +607,6 @@ def generate_launch_description():
         DeclareLaunchArgument("tgt_component", default_value="1"),
         DeclareLaunchArgument("fcu_protocol", default_value="v2.0"),
         DeclareLaunchArgument("respawn_mavros", default_value="false"),
-
         # Runtime profile
         DeclareLaunchArgument(
             "ca_runtime_profile",
@@ -610,7 +617,6 @@ def generate_launch_description():
             "ca_camera_launch",
             default_value="phase2_camera_usb_test.launch.py",
         ),
-
         # Core CA topics
         DeclareLaunchArgument(
             "ca_image_topic",
@@ -645,15 +651,18 @@ def generate_launch_description():
         DeclareLaunchArgument("ca_mode_topic", default_value="/ca/mode"),
         DeclareLaunchArgument("ca_metrics_topic", default_value="/ca/metrics"),
         DeclareLaunchArgument("ca_debug_image_topic", default_value="/ca/debug_image"),
-
         # Profile-based toggles
         DeclareLaunchArgument(
             "ca_use_camera",
-            default_value=_bool_by_profile(ca_runtime_profile, ["usb_light", "usb_watchdog", "full"]),
+            default_value=_bool_by_profile(
+                ca_runtime_profile, ["usb_light", "usb_watchdog", "full"]
+            ),
         ),
         DeclareLaunchArgument(
             "ca_use_detector",
-            default_value=_bool_by_profile(ca_runtime_profile, ["usb_light", "usb_watchdog", "full"]),
+            default_value=_bool_by_profile(
+                ca_runtime_profile, ["usb_light", "usb_watchdog", "full"]
+            ),
         ),
         DeclareLaunchArgument(
             "ca_use_waterline",
@@ -677,7 +686,9 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             "ca_use_risk",
-            default_value=_bool_by_profile(ca_runtime_profile, ["usb_light", "usb_watchdog", "full"]),
+            default_value=_bool_by_profile(
+                ca_runtime_profile, ["usb_light", "usb_watchdog", "full"]
+            ),
         ),
         DeclareLaunchArgument(
             "ca_use_watchdog",
@@ -685,12 +696,10 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument("ca_use_ca_viewer", default_value="false"),
         DeclareLaunchArgument("ca_use_wl_viewer", default_value="false"),
-
         # Detector QoS
         DeclareLaunchArgument("ca_det_sub_reliability", default_value="reliable"),
         DeclareLaunchArgument("ca_det_pub_reliability", default_value="reliable"),
         DeclareLaunchArgument("ca_det_qos_depth", default_value="10"),
-
         # Camera passthrough / tuning
         DeclareLaunchArgument("ca_camera_profile", default_value=""),
         DeclareLaunchArgument("ca_camera_source", default_value=""),
@@ -703,8 +712,12 @@ def generate_launch_description():
         DeclareLaunchArgument("ca_camera_device_width", default_value="640"),
         DeclareLaunchArgument("ca_camera_device_height", default_value="480"),
         DeclareLaunchArgument("ca_camera_device_fps", default_value="30"),
-        DeclareLaunchArgument("ca_camera_topic_best_effort", default_value="/seano/camera/image_raw"),
-        DeclareLaunchArgument("ca_camera_topic_reliable", default_value="/seano/camera/image_raw_reliable"),
+        DeclareLaunchArgument(
+            "ca_camera_topic_best_effort", default_value="/seano/camera/image_raw"
+        ),
+        DeclareLaunchArgument(
+            "ca_camera_topic_reliable", default_value="/seano/camera/image_raw_reliable"
+        ),
         DeclareLaunchArgument("ca_camera_frame_id", default_value=""),
         DeclareLaunchArgument("ca_camera_max_fps", default_value="15.0"),
         DeclareLaunchArgument("ca_camera_max_age_ms", default_value="120"),
@@ -714,7 +727,6 @@ def generate_launch_description():
         DeclareLaunchArgument("ca_camera_bag_base_dir", default_value=""),
         DeclareLaunchArgument("ca_camera_bag_prefix", default_value="phase2_camera"),
         DeclareLaunchArgument("ca_camera_duration_s", default_value="0"),
-
         # Detector runtime/config passthrough
         DeclareLaunchArgument("ca_det_model_path", default_value="yolov8n.pt"),
         DeclareLaunchArgument(
@@ -734,20 +746,17 @@ def generate_launch_description():
         DeclareLaunchArgument("ca_det_publish_annotated", default_value="true"),
         DeclareLaunchArgument("ca_det_publish_detections", default_value="true"),
         DeclareLaunchArgument("ca_det_publish_empty_detections", default_value="true"),
-
         # Watchdog
         DeclareLaunchArgument(
             "wd_startup_grace_s",
             default_value=_str_by_profile(ca_runtime_profile, "4.0", "8.0"),
         ),
         DeclareLaunchArgument("wd_start_in_failsafe", default_value="false"),
-
         # mux / limiter
         DeclareLaunchArgument("mux_command_timeout_s", default_value="0.6"),
         DeclareLaunchArgument("limiter_input_timeout_s", default_value="0.6"),
         DeclareLaunchArgument("limiter_failsafe_timeout_s", default_value="2.0"),
         DeclareLaunchArgument("limiter_loop_hz", default_value="20.0"),
-
         # bridge / output
         DeclareLaunchArgument("input_mode", default_value="left_right"),
         DeclareLaunchArgument("output_mode", default_value="rc_left_right"),
@@ -766,12 +775,10 @@ def generate_launch_description():
         DeclareLaunchArgument("bridge_pub_hz", default_value="20.0"),
         DeclareLaunchArgument("bridge_command_timeout_s", default_value="0.5"),
         DeclareLaunchArgument("bridge_pwm_slew_rate_us_per_s", default_value="250.0"),
-
         # mode policy
         DeclareLaunchArgument("avoid_mode", default_value="MANUAL"),
         DeclareLaunchArgument("mission_mode_default", default_value="AUTO"),
         DeclareLaunchArgument("failsafe_mode", default_value="MANUAL"),
-
         # takeover tuning
         DeclareLaunchArgument("cruise_speed", default_value="0.30"),
         DeclareLaunchArgument("slow_factor", default_value="0.55"),

@@ -13,6 +13,17 @@ Dokumen ini adalah peta kerja cepat untuk membedakan launch yang:
 
 ---
 
+## 0. CARA MEMBACA REPO SAAT INI
+
+Repo ini saat ini harus dibaca sebagai **baseline aktif TA**, bukan hanya workspace eksperimen umum.
+
+Interpretasi operasional yang dipakai sekarang:
+- baseline simulasi utama dipusatkan di `phase5_mission_avoid_integration.launch.py`
+- baseline hardware utama dipusatkan di `phase7_cuav_usb_hardware.launch.py`
+- nama file launch aktif sengaja dipertahankan dulu agar konsisten dengan evidence, slide progres, dan baseline pengujian
+
+Dokumen ini membantu menjaga agar operator/pengembang tidak salah memilih launch aktif di tengah banyaknya file legacy atau bench launch.
+
 ## 1. LAUNCH AKTIF UTAMA
 
 ### [ACTIVE_SIM] phase5_mission_avoid_integration.launch.py
@@ -43,6 +54,7 @@ Dokumen ini adalah peta kerja cepat untuk membedakan launch yang:
 **Catatan**
 - ini adalah launch utama hardware
 - satu run paling lengkap untuk target collision avoidance nyata
+- parameter aktif hardware sebaiknya dibaca bersama `docs/BASELINE_PARAMETER_LOCK.md`
 
 ---
 
