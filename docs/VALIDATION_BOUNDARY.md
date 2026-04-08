@@ -91,3 +91,13 @@ Batasnya ada pada:
 - belum lengkapnya field validation,
 - belum finalnya parameter dinamik kapal,
 - sensitivitas perception nyata terhadap lingkungan lapangan.
+
+---
+
+## Companion Document
+
+For a compact defense-facing mapping from claim to evidence, read:
+
+- `docs/CLAIMS_AND_EVIDENCE_MATRIX.md`
+
+This companion document is intended to keep wording in the report, seminar slides, and journal draft aligned with the current evidence level.

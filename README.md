@@ -651,6 +651,24 @@ Expected behavior:
 
 ---
 
+
+# 11A. Thesis Documentation Map
+
+For thesis-facing review and defense preparation, use these companion documents:
+
+* [Thesis Repo Index](docs/THESIS_REPO_INDEX.md)
+* [Claims and Evidence Matrix](docs/CLAIMS_AND_EVIDENCE_MATRIX.md)
+* [Validation Boundary](docs/VALIDATION_BOUNDARY.md)
+* [Baseline Parameter Lock](docs/BASELINE_PARAMETER_LOCK.md)
+* [Active Runtime File Matrix](docs/ACTIVE_RUNTIME_FILE_MATRIX.md)
+* [Active Topic Flow](docs/ACTIVE_TOPIC_FLOW.md)
+* [Field Test Evidence Checklist](docs/FIELD_TEST_EVIDENCE_CHECKLIST.md)
+* [Post-Field Refactor Plan](docs/POST_FIELD_REFACTOR_PLAN.md)
+
+These documents are intended to keep the repository readable as an active thesis baseline, not only as a development workspace.
+
+---
+
 # 12. License
 
 This project is released under the [MIT License](LICENSE).
