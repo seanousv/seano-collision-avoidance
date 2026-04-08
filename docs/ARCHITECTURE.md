@@ -322,6 +322,48 @@ Dengan kata lain:
 
 Penjelasan ini penting untuk sidang, interpretasi rosbag, dan sinkronisasi antara kode, laporan, dan jurnal.
 
+
+## 6.1 Hierarki state antar-layer
+
+Untuk menghindari kebingungan, state pada repo ini harus dibaca sebagai **state multi-layer**, bukan satu daftar state tunggal.
+
+### Layer perception / risk
+Contoh state:
+- `NORMAL`
+- `CAUTION`
+- `LOST_PERCEPTION`
+
+Makna:
+- layer ini menilai **kesehatan persepsi** dan **kesiapan visual**.
+
+### Layer watchdog
+Contoh state:
+- `NORMAL`
+- `CAUTION`
+- `LOST`
+
+Makna:
+- layer ini menentukan apakah jalur persepsi masih cukup sehat untuk diizinkan mengontrol avoidance.
+
+### Layer mission / autopilot
+State formal utama:
+- `MISSION`
+- `AVOID`
+- `REJOIN`
+- `FAILSAFE`
+
+Makna:
+- layer ini menentukan bagaimana FCU dan jalur mission harus dibaca serta dipulihkan.
+
+### Ringkasan interpretasi
+- `LOST_PERCEPTION` pada layer perception **bukan** nama state yang sama dengan `FAILSAFE` pada mission manager,
+- `LOST` pada watchdog **bukan** nama state yang sama dengan `REJOIN` atau `AVOID`,
+- mission manager bekerja pada level lebih tinggi, yaitu mode autopilot dan pemulihan mission.
+
+Pemisahan ini penting untuk sidang, interpretasi rosbag, dan sinkronisasi antara kode, laporan, dan jurnal.
+
+---
+
 ## 7. Layer dan Tanggung Jawab
 
 ## 7.1 Mission / Autopilot Layer

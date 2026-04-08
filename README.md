@@ -82,6 +82,23 @@ Supporting documents for the current thesis status:
 - [Thesis Progress Status](docs/THESIS_PROGRESS_STATUS.md)
 - [Baseline Parameter Lock](docs/BASELINE_PARAMETER_LOCK.md)
 
+
+## 1.4 Thesis Baseline Support Documents
+
+The following documents should be read together when using this repository as a thesis baseline:
+
+- [Thesis Progress Status](docs/THESIS_PROGRESS_STATUS.md)
+- [Baseline Parameter Lock](docs/BASELINE_PARAMETER_LOCK.md)
+- [Validation Boundary](docs/VALIDATION_BOUNDARY.md)
+
+These documents help distinguish:
+
+- what is already strong enough to be treated as current thesis baseline evidence,
+- what is already locked as design-level baseline values,
+- and what is still runtime-tunable or still awaiting controlled field validation.
+
+---
+
 ---
 
 # 2. Vehicle Constraint and Control Philosophy
