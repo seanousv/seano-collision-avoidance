@@ -645,8 +645,8 @@ def generate_launch_description():
         DeclareLaunchArgument("ca_risk_topic", default_value="/ca/risk"),
         DeclareLaunchArgument(
             "ca_command_topic",
-            default_value="/ca/command",
-            description="Default hardware disatukan ke /ca/command. Override ke /ca/command_safe hanya bila memang disengaja.",
+            default_value="/ca/command_safe",
+            description="Default hardware mengikuti watchdog-conditioned command stream (/ca/command_safe). Override ke /ca/command hanya untuk debugging atau eksperimen terkontrol.",
         ),
         DeclareLaunchArgument("ca_mode_topic", default_value="/ca/mode"),
         DeclareLaunchArgument("ca_metrics_topic", default_value="/ca/metrics"),
