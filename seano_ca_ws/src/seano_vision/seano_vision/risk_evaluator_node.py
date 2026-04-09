@@ -5,18 +5,18 @@
 SEANO Collision Avoidance - Risk Evaluator Node (ROS2 Humble)
 
 Subscribe (core):
-  - /camera/detections           (vision_msgs/Detection2DArray)
-  - /camera/image_raw_reliable   (sensor_msgs/Image)
+  - /camera/detections_filtered   (vision_msgs/Detection2DArray)
+  - /camera/image_raw_reliable    (sensor_msgs/Image)
 
 Subscribe (vision health / optional but recommended):
-  - /vision/quality              (std_msgs/Float32)  -> vision quality external
-  - /vision/freeze               (std_msgs/Bool)     -> freeze flag
-  - /vision/freeze_reason        (std_msgs/String)   -> e.g. "still", "moving", "timeout"
+  - /vision/quality               (std_msgs/Float32)  -> vision quality external
+  - /vision/freeze                (std_msgs/Bool)     -> freeze flag
+  - /vision/freeze_reason         (std_msgs/String)   -> e.g. "still", "moving", "timeout"
 
 Publish:
   - /ca/risk            (std_msgs/Float32)
   - /ca/command         (std_msgs/String)
-  - /ca/mode            (std_msgs/String)
+  - /ca/mode            (std_msgs/String)      -> local evaluator mode
   - /ca/metrics         (std_msgs/String JSON)
   - /ca/vision_quality  (std_msgs/Float32)
   - /ca/debug_image     (sensor_msgs/Image)
@@ -26,12 +26,13 @@ Notes:
 - Maritime-style HUD theme (navy/teal), compact & readable.
 - Bearing ruler overlay (camera-relative) for navigational feel.
 - Image buffer by stamp to better align debug overlay with detections.
-- Added state machine: NORMAL / CAUTION / LOST_PERCEPTION with hysteresis + failsafe.
+- Local evaluator state machine: NORMAL / CAUTION / LOST_PERCEPTION.
 - Revised for paper-grade analysis:
     * pseudo-TTC integrated into risk
     * situation-aware maneuver bias
     * richer reason logging
     * vTTC label (not TCPA)
+- This node is the risk/perception evaluator layer; it is not the full mission supervisor.
 """
 
 from __future__ import annotations
@@ -413,6 +414,11 @@ class RiskEvaluatorNode(Node):
             maxlen=max(4, int(self.get_parameter("image_buffer_size").value))
         )
 
+        # Validate startup parameters before continuing
+        ok, reason = self._validate_param_values({})
+        if not ok:
+            raise ValueError(f"Invalid risk_evaluator_node startup parameters: {reason}")
+
         self.add_on_set_parameters_callback(self._on_params)
 
         # pubs
@@ -476,30 +482,288 @@ class RiskEvaluatorNode(Node):
         self.get_logger().info(
             f"risk_evaluator_node started | cv={_HAS_CV} depth={self.qos.depth} "
             f"det={self.get_parameter('detections_topic').value} img={self.get_parameter('image_topic').value} "
-            f"ext_vq={self.get_parameter('use_external_vision_quality').value} freeze={self.get_parameter('use_freeze_detector').value}"
+            f"ext_vq={self.get_parameter('use_external_vision_quality').value} "
+            f"freeze={self.get_parameter('use_freeze_detector').value}"
         )
 
     # --------------------------
     # Params
     # --------------------------
-    def _on_params(self, params: List[Parameter]) -> SetParametersResult:
-        res = SetParametersResult()
-        res.successful = True
-        res.reason = "ok"
-        try:
-            names = {p.name for p in params}
-            if "allow_class_ids" in names or "deny_class_ids" in names:
-                self._refresh_filters()
-            if "image_buffer_size" in names:
-                n = max(4, int(self.get_parameter("image_buffer_size").value))
-                self.image_buf = deque(self.image_buf, maxlen=n)
-        except Exception as e:
-            self.get_logger().warn(f"param refresh warning: {e}")
-        return res
+    def _candidate_value(self, name: str, incoming: Dict[str, Parameter]):
+        if name in incoming:
+            return incoming[name].value
+        return self.get_parameter(name).value
 
-    def _refresh_filters(self) -> None:
-        allow_v = self.get_parameter("allow_class_ids").value
-        deny_v = self.get_parameter("deny_class_ids").value
+    def _validate_param_values(self, incoming: Dict[str, Parameter]) -> Tuple[bool, str]:
+        try:
+            qos_depth = int(self._candidate_value("qos_depth", incoming))
+            min_det_score = float(self._candidate_value("min_det_score", incoming))
+
+            enable_tracking = bool(self._candidate_value("enable_tracking", incoming))
+            iou_match_thresh = float(self._candidate_value("iou_match_thresh", incoming))
+            track_timeout_s = float(self._candidate_value("track_timeout_s", incoming))
+            max_tracks = int(self._candidate_value("max_tracks", incoming))
+
+            camera_hfov_deg = float(self._candidate_value("camera_hfov_deg", incoming))
+            center_band_ratio = float(self._candidate_value("center_band_ratio", incoming))
+            bottom_danger_ratio = float(self._candidate_value("bottom_danger_ratio", incoming))
+            near_area_ratio = float(self._candidate_value("near_area_ratio", incoming))
+
+            w_proximity = float(self._candidate_value("w_proximity", incoming))
+            w_center = float(self._candidate_value("w_center", incoming))
+            w_approach = float(self._candidate_value("w_approach", incoming))
+            w_bearing_const = float(self._candidate_value("w_bearing_const", incoming))
+            w_ttc = float(self._candidate_value("w_ttc", incoming))
+            bearing_rate_bad_dps = float(self._candidate_value("bearing_rate_bad_dps", incoming))
+            risk_ema_alpha = float(self._candidate_value("risk_ema_alpha", incoming))
+            vq_risk_floor = float(self._candidate_value("vq_risk_floor", incoming))
+
+            ttc_area_threshold = float(self._candidate_value("ttc_area_threshold", incoming))
+            ttc_max_s = float(self._candidate_value("ttc_max_s", incoming))
+            ttc_score_horizon_s = float(self._candidate_value("ttc_score_horizon_s", incoming))
+
+            enter_avoid_risk = float(self._candidate_value("enter_avoid_risk", incoming))
+            exit_avoid_risk = float(self._candidate_value("exit_avoid_risk", incoming))
+            min_cmd_hold_s = float(self._candidate_value("min_cmd_hold_s", incoming))
+
+            risk_slow_threshold = float(self._candidate_value("risk_slow_threshold", incoming))
+            risk_turn_slow_threshold = float(
+                self._candidate_value("risk_turn_slow_threshold", incoming)
+            )
+            risk_turn_threshold = float(self._candidate_value("risk_turn_threshold", incoming))
+            risk_stop_threshold = float(self._candidate_value("risk_stop_threshold", incoming))
+            vttc_turn_threshold_s = float(self._candidate_value("vttc_turn_threshold_s", incoming))
+            vttc_stop_threshold_s = float(self._candidate_value("vttc_stop_threshold_s", incoming))
+
+            use_internal_vision_quality = bool(
+                self._candidate_value("use_internal_vision_quality", incoming)
+            )
+            vq_check_every_n_frames = int(
+                self._candidate_value("vq_check_every_n_frames", incoming)
+            )
+            use_external_vision_quality = bool(
+                self._candidate_value("use_external_vision_quality", incoming)
+            )
+            external_vq_timeout_s = float(self._candidate_value("external_vq_timeout_s", incoming))
+            vq_min = float(self._candidate_value("vq_min", incoming))
+
+            use_freeze_detector = bool(self._candidate_value("use_freeze_detector", incoming))
+            freeze_timeout_s = float(self._candidate_value("freeze_timeout_s", incoming))
+
+            tick_hz = float(self._candidate_value("tick_hz", incoming))
+            vq_caution_enter = float(self._candidate_value("vq_caution_enter", incoming))
+            vq_caution_exit = float(self._candidate_value("vq_caution_exit", incoming))
+
+            image_timeout_s = float(self._candidate_value("image_timeout_s", incoming))
+            lost_dark_vq = float(self._candidate_value("lost_dark_vq", incoming))
+            lost_dark_freeze_hold_s = float(
+                self._candidate_value("lost_dark_freeze_hold_s", incoming)
+            )
+            lost_min_hold_s = float(self._candidate_value("lost_min_hold_s", incoming))
+            recover_vq = float(self._candidate_value("recover_vq", incoming))
+            recover_ok_hold_s = float(self._candidate_value("recover_ok_hold_s", incoming))
+            detections_stale_s = float(self._candidate_value("detections_stale_s", incoming))
+
+            image_buffer_size = int(self._candidate_value("image_buffer_size", incoming))
+            max_image_age_s = float(self._candidate_value("max_image_age_s", incoming))
+
+            overlay_alpha_bg = float(self._candidate_value("overlay_alpha_bg", incoming))
+            overlay_border_thickness = int(
+                self._candidate_value("overlay_border_thickness", incoming)
+            )
+            overlay_line_alpha = float(self._candidate_value("overlay_line_alpha", incoming))
+            overlay_riskbar_h_px = int(self._candidate_value("overlay_riskbar_h_px", incoming))
+            overlay_bbox_chip_alpha = float(
+                self._candidate_value("overlay_bbox_chip_alpha", incoming)
+            )
+            overlay_ruler_h_px = int(self._candidate_value("overlay_ruler_h_px", incoming))
+            overlay_ruler_alpha = float(self._candidate_value("overlay_ruler_alpha", incoming))
+            overlay_ruler_tick_deg = int(self._candidate_value("overlay_ruler_tick_deg", incoming))
+            overlay_show_topk = int(self._candidate_value("overlay_show_topk", incoming))
+
+        except Exception as e:
+            return False, f"parameter parse error: {e}"
+
+        if qos_depth < 1:
+            return False, "qos_depth must be >= 1"
+
+        if not (0.0 <= min_det_score <= 1.0):
+            return False, "min_det_score must be in [0, 1]"
+
+        if enable_tracking:
+            if not (0.0 <= iou_match_thresh <= 1.0):
+                return False, "iou_match_thresh must be in [0, 1]"
+            if track_timeout_s <= 0.0:
+                return False, "track_timeout_s must be > 0"
+            if max_tracks < 1:
+                return False, "max_tracks must be >= 1"
+
+        if camera_hfov_deg <= 0.0 or camera_hfov_deg > 179.0:
+            return False, "camera_hfov_deg must be in (0, 179]"
+
+        if not (0.0 < center_band_ratio <= 1.0):
+            return False, "center_band_ratio must be in (0, 1]"
+        if not (0.0 < bottom_danger_ratio <= 1.0):
+            return False, "bottom_danger_ratio must be in (0, 1]"
+        if near_area_ratio <= 0.0:
+            return False, "near_area_ratio must be > 0"
+
+        for name, value in (
+            ("w_proximity", w_proximity),
+            ("w_center", w_center),
+            ("w_approach", w_approach),
+            ("w_bearing_const", w_bearing_const),
+            ("w_ttc", w_ttc),
+        ):
+            if value < 0.0:
+                return False, f"{name} must be >= 0"
+
+        if bearing_rate_bad_dps <= 0.0:
+            return False, "bearing_rate_bad_dps must be > 0"
+
+        if not (0.0 < risk_ema_alpha <= 1.0):
+            return False, "risk_ema_alpha must be in (0, 1]"
+
+        if not (0.0 <= vq_risk_floor <= 1.0):
+            return False, "vq_risk_floor must be in [0, 1]"
+
+        if ttc_area_threshold <= 0.0:
+            return False, "ttc_area_threshold must be > 0"
+        if ttc_max_s <= 0.0:
+            return False, "ttc_max_s must be > 0"
+        if ttc_score_horizon_s <= 0.0:
+            return False, "ttc_score_horizon_s must be > 0"
+
+        if not (0.0 <= exit_avoid_risk < enter_avoid_risk <= 1.0):
+            return False, "must satisfy 0 <= exit_avoid_risk < enter_avoid_risk <= 1"
+
+        if min_cmd_hold_s < 0.0:
+            return False, "min_cmd_hold_s must be >= 0"
+
+        if not (
+            0.0
+            <= risk_slow_threshold
+            <= risk_turn_slow_threshold
+            <= risk_turn_threshold
+            <= risk_stop_threshold
+            <= 1.0
+        ):
+            return (
+                False,
+                "must satisfy risk_slow_threshold <= risk_turn_slow_threshold <= "
+                "risk_turn_threshold <= risk_stop_threshold, all in [0,1]",
+            )
+
+        if vttc_turn_threshold_s <= 0.0 or vttc_stop_threshold_s <= 0.0:
+            return False, "vttc_turn_threshold_s and vttc_stop_threshold_s must be > 0"
+
+        if vttc_stop_threshold_s > vttc_turn_threshold_s:
+            return False, "vttc_stop_threshold_s should be <= vttc_turn_threshold_s"
+
+        if use_internal_vision_quality and vq_check_every_n_frames < 1:
+            return False, "vq_check_every_n_frames must be >= 1"
+
+        if use_external_vision_quality and external_vq_timeout_s <= 0.0:
+            return False, "external_vq_timeout_s must be > 0"
+
+        if not (0.0 <= vq_min <= 1.0):
+            return False, "vq_min must be in [0, 1]"
+
+        if use_freeze_detector and freeze_timeout_s <= 0.0:
+            return False, "freeze_timeout_s must be > 0"
+
+        if tick_hz <= 0.0:
+            return False, "tick_hz must be > 0"
+
+        if not (0.0 <= vq_caution_enter < vq_caution_exit <= 1.0):
+            return False, "must satisfy 0 <= vq_caution_enter < vq_caution_exit <= 1"
+
+        if image_timeout_s <= 0.0:
+            return False, "image_timeout_s must be > 0"
+
+        if not (0.0 <= lost_dark_vq <= 1.0):
+            return False, "lost_dark_vq must be in [0, 1]"
+
+        if lost_dark_freeze_hold_s < 0.0:
+            return False, "lost_dark_freeze_hold_s must be >= 0"
+
+        if lost_min_hold_s < 0.0:
+            return False, "lost_min_hold_s must be >= 0"
+
+        if not (0.0 <= recover_vq <= 1.0):
+            return False, "recover_vq must be in [0, 1]"
+
+        if recover_ok_hold_s < 0.0:
+            return False, "recover_ok_hold_s must be >= 0"
+
+        if detections_stale_s <= 0.0:
+            return False, "detections_stale_s must be > 0"
+
+        if image_buffer_size < 4:
+            return False, "image_buffer_size must be >= 4"
+
+        if max_image_age_s <= 0.0:
+            return False, "max_image_age_s must be > 0"
+
+        if not (0.0 <= overlay_alpha_bg <= 1.0):
+            return False, "overlay_alpha_bg must be in [0, 1]"
+
+        if overlay_border_thickness < 1:
+            return False, "overlay_border_thickness must be >= 1"
+
+        if not (0.0 <= overlay_line_alpha <= 1.0):
+            return False, "overlay_line_alpha must be in [0, 1]"
+
+        if overlay_riskbar_h_px < 1:
+            return False, "overlay_riskbar_h_px must be >= 1"
+
+        if not (0.0 <= overlay_bbox_chip_alpha <= 1.0):
+            return False, "overlay_bbox_chip_alpha must be in [0, 1]"
+
+        if overlay_ruler_h_px < 1:
+            return False, "overlay_ruler_h_px must be >= 1"
+
+        if not (0.0 <= overlay_ruler_alpha <= 1.0):
+            return False, "overlay_ruler_alpha must be in [0, 1]"
+
+        if overlay_ruler_tick_deg < 1:
+            return False, "overlay_ruler_tick_deg must be >= 1"
+
+        if overlay_show_topk < 0:
+            return False, "overlay_show_topk must be >= 0"
+
+        return True, "ok"
+
+    def _on_params(self, params: List[Parameter]) -> SetParametersResult:
+        incoming = {p.name: p for p in params}
+
+        ok, reason = self._validate_param_values(incoming)
+        if not ok:
+            return SetParametersResult(successful=False, reason=reason)
+
+        try:
+            if "allow_class_ids" in incoming or "deny_class_ids" in incoming:
+                allow_v = (
+                    incoming["allow_class_ids"].value if "allow_class_ids" in incoming else None
+                )
+                deny_v = incoming["deny_class_ids"].value if "deny_class_ids" in incoming else None
+                self._refresh_filters(allow_v=allow_v, deny_v=deny_v)
+
+            if "image_buffer_size" in incoming:
+                n = max(4, int(incoming["image_buffer_size"].value))
+                self.image_buf = deque(self.image_buf, maxlen=n)
+
+        except Exception as e:
+            return SetParametersResult(successful=False, reason=f"param apply error: {e}")
+
+        return SetParametersResult(successful=True, reason="ok")
+
+    def _refresh_filters(self, allow_v=None, deny_v=None) -> None:
+        if allow_v is None:
+            allow_v = self.get_parameter("allow_class_ids").value
+        if deny_v is None:
+            deny_v = self.get_parameter("deny_class_ids").value
+
         self.allow_ids = set(_clean_str_list(allow_v))
         self.deny_ids = set(_clean_str_list(deny_v))
         self.allow_ids.discard("")
@@ -640,6 +904,9 @@ class RiskEvaluatorNode(Node):
             self._prune_tracks(t)
 
         overall_risk, top, metrics = self._evaluate(t, det_dt_ms)
+
+        # local_mode explicitly indicates evaluator-local state
+        metrics["local_mode"] = self.mode
 
         if self.mode == "LOST_PERCEPTION":
             cmd = str(self.get_parameter("cmd_stop").value)
@@ -816,7 +1083,6 @@ class RiskEvaluatorNode(Node):
         return out
 
     def _apply_filters(self, dets: List[Det]) -> List[Det]:
-        self._refresh_filters()
         if self.deny_ids:
             dets = [d for d in dets if d.class_id not in self.deny_ids]
         if self.allow_ids:
@@ -946,6 +1212,7 @@ class RiskEvaluatorNode(Node):
             "risk": 0.0,
             "cmd": str(self.last_cmd),
             "mode": self.mode,
+            "local_mode": self.mode,
             "vision_quality": float(vq),
             "vision_quality_source": str(vq_src),
             "freeze": bool(freeze),
