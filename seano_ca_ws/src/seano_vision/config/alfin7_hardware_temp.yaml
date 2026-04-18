@@ -1,7 +1,4 @@
 # SEANO Alfin7 temporary hardware profile
-# Purpose:
-# - camera hardware bring-up at 640x480
-# - still conservative because FOV is not yet calibrated
 # Not final thesis constants.
 
 risk_evaluator_node:
@@ -21,6 +18,10 @@ risk_evaluator_node:
     center_band_ratio: 0.30
     bottom_danger_ratio: 0.55
     near_area_ratio: 0.010
+
+    min_det_score: 0.35
+    allow_class_ids: [""]
+    deny_class_ids: [""]
 
     enter_avoid_risk: 0.45
     exit_avoid_risk: 0.28
