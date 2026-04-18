@@ -1,18 +1,21 @@
-# SEANO Alfin7 conservative dry-run profile
-# Temporary operational values for safe video-demo testing.
-# Not final thesis constants.
+# SEANO Alfin7 baseline pointer profile
+# This file is kept as the default entrypoint for compatibility.
+# Current meaning:
+# - use temporary hardware-safe values
+# - not final thesis constants
+# - replace after valid camera calibration / validated FOV is available
 
 risk_evaluator_node:
   ros__parameters:
-    geometry_profile_name: "SEANO_Alfin7_VIDEODEMO_848x478"
-    visual_params_source: "BOX_SPEC_TEMPORARY_65_TO_70_DEG"
+    geometry_profile_name: "SEANO_Alfin7_HARDWARE_640x480_TEMP"
+    visual_params_source: "TEMP_BOX_SPEC_65_TO_70_DEG"
 
     vehicle_length_m: 0.70
     vehicle_beam_m: 0.50
     camera_height_m: 0.58
 
-    expected_image_width: 848
-    expected_image_height: 478
+    expected_image_width: 640
+    expected_image_height: 480
     startup_image_geometry_grace_s: 2.0
 
     camera_hfov_deg: 67.5
