@@ -1,6 +1,6 @@
 # SEANO Alfin7 runtime visual geometry template
 # Isi nilai numerik ini secara eksplisit dari hasil FOV valid / kalibrasi kamera.
-# Jangan gunakan sebagai runtime final selama 4 parameter visual inti masih placeholder.
+# JANGAN gunakan sebagai runtime final selama 4 parameter visual inti masih placeholder.
 
 risk_evaluator_node:
   ros__parameters:
