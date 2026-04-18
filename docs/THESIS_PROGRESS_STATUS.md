@@ -133,7 +133,8 @@ Dokumen parameter resmi ada di:
 - `docs/BASELINE_PARAMETER_LOCK.md`
 
 Prinsip pembacaan:
-- parameter geometri visual yang sudah diturunkan boleh dianggap **baseline design values**,
+- geometri platform final dan resolusi citra final boleh dianggap **baseline design-lock values**,
+- parameter visual yang masih bergantung pada FOV atau kalibrasi kamera (`camera_hfov_deg`, `camera_vfov_deg`, `f_x`, `f_y`, `center_band_ratio`, `bottom_danger_ratio`, `near_area_ratio`) harus tetap dianggap **not-final-yet** sampai data kamera valid tersedia,
 - parameter dinamik kapal dan aktuasi tetap dianggap **runtime-tunable** sampai data uji nyata cukup.
 
 ---
