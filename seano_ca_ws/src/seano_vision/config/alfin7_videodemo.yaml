@@ -1,11 +1,13 @@
-# SEANO Alfin7 conservative dry-run profile
-# Temporary operational values for safe video-demo testing.
+# SEANO Alfin7 profile for video-demo testing
+# Purpose:
+# - stable local CA debug with videodemo.mp4
+# - conservative thresholds for high-latency perception
 # Not final thesis constants.
 
 risk_evaluator_node:
   ros__parameters:
     geometry_profile_name: "SEANO_Alfin7_VIDEODEMO_848x478"
-    visual_params_source: "BOX_SPEC_TEMPORARY_65_TO_70_DEG"
+    visual_params_source: "TEMP_BOX_SPEC_65_TO_70_DEG"
 
     vehicle_length_m: 0.70
     vehicle_beam_m: 0.50
@@ -35,9 +37,9 @@ risk_evaluator_node:
     min_cmd_hold_s: 0.35
     risk_ema_alpha: 0.45
 
-    track_timeout_s: 0.60
-    detections_stale_s: 0.60
-    image_timeout_s: 1.20
+    track_timeout_s: 0.80
+    detections_stale_s: 0.80
+    image_timeout_s: 1.50
 
     use_external_vision_quality: false
     use_freeze_detector: false

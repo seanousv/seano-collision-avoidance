@@ -12,12 +12,8 @@ from launch_ros.substitutions import FindPackageShare
 
 
 def generate_launch_description():
-    # --------------------
-    # Launch arguments
-    # --------------------
     use_camera = LaunchConfiguration("use_camera")
     camera_launch = LaunchConfiguration("camera_launch")
-
     use_detector = LaunchConfiguration("use_detector")
     use_risk = LaunchConfiguration("use_risk")
     use_viewer = LaunchConfiguration("use_viewer")
@@ -29,26 +25,20 @@ def generate_launch_description():
     mode_topic = LaunchConfiguration("mode_topic")
     metrics_topic = LaunchConfiguration("metrics_topic")
 
-    # detector QoS knobs
     det_sub_reliability = LaunchConfiguration("det_sub_reliability")
     det_pub_reliability = LaunchConfiguration("det_pub_reliability")
     det_qos_depth = LaunchConfiguration("det_qos_depth")
 
-    # --------------------
-    # Include camera launch
-    # --------------------
+    risk_profile = LaunchConfiguration("risk_profile")
+
+    pkg_share = FindPackageShare("seano_vision")
+    risk_profile_file = PathJoinSubstitution([pkg_share, "config", risk_profile])
+
     camera_include = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            PathJoinSubstitution(
-                [FindPackageShare("seano_vision"), "launch", camera_launch]
-            )
-        ),
+        PythonLaunchDescriptionSource(PathJoinSubstitution([pkg_share, "launch", camera_launch])),
         condition=IfCondition(use_camera),
     )
 
-    # --------------------
-    # Detector node
-    # --------------------
     detector_node = Node(
         package="seano_vision",
         executable="detector_node",
@@ -70,57 +60,50 @@ def generate_launch_description():
         ],
     )
 
-    # --------------------
-    # Risk evaluator node
-    # --------------------
     risk_node = Node(
         package="seano_vision",
         executable="risk_evaluator_node",
-        name="seano_risk_eval",
+        name="risk_evaluator_node",
         output="screen",
         condition=IfCondition(use_risk),
         parameters=[
+            risk_profile_file,
             {
                 "detections_topic": detections_topic,
                 "image_topic": image_topic,
                 "risk_topic": "/ca/risk",
-                "command_topic": "/ca/command",
+                "command_topic": "/ca/command_safe",
                 "mode_topic": mode_topic,
                 "metrics_topic": metrics_topic,
                 "debug_image_topic": debug_image_topic,
                 "publish_debug_image": True,
-            }
+            },
         ],
     )
 
-    # --------------------
-    # Viewer node (opsional)
-    # Default dimatikan karena baseline monitoring sekarang via browser/web_video_server
-    # --------------------
     viewer_node = Node(
         package="image_tools",
         executable="showimage",
         name="seano_viewer",
         output="screen",
         condition=IfCondition(use_viewer),
-        remappings=[
-            ("image", debug_image_topic),
-        ],
+        remappings=[("image", debug_image_topic)],
     )
 
     return LaunchDescription(
         [
-            # toggles
             DeclareLaunchArgument("use_camera", default_value="true"),
             DeclareLaunchArgument("use_detector", default_value="true"),
             DeclareLaunchArgument("use_risk", default_value="true"),
             DeclareLaunchArgument("use_viewer", default_value="false"),
-            # camera launch selector
             DeclareLaunchArgument(
                 "camera_launch",
                 default_value="phase2_camera_usb_test.launch.py",
             ),
-            # topics
+            DeclareLaunchArgument(
+                "risk_profile",
+                default_value="alfin7_videodemo.yaml",
+            ),
             DeclareLaunchArgument(
                 "image_topic",
                 default_value="/seano/camera/image_raw_reliable",
@@ -145,7 +128,6 @@ def generate_launch_description():
                 "metrics_topic",
                 default_value="/ca/metrics",
             ),
-            # detector QoS
             DeclareLaunchArgument(
                 "det_sub_reliability",
                 default_value="reliable",
@@ -158,7 +140,6 @@ def generate_launch_description():
                 "det_qos_depth",
                 default_value="10",
             ),
-            # actions
             camera_include,
             detector_node,
             risk_node,
