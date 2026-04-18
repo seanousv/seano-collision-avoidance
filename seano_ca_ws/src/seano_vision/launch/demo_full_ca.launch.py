@@ -135,7 +135,7 @@ def generate_launch_description():
     # -------------------------
     camera_launch = LaunchConfiguration("camera_launch")
     pkg_share = FindPackageShare("seano_vision")
-
+    alfin7_baseline_file = PathJoinSubstitution([pkg_share, "config", "alfin7_baseline.yaml"])
     # Extra passthrough args for phase2_camera_source_test.launch.py only.
     # Defaults can be injected via environment variables so phase5 does not
     # need to be edited just to switch from synthetic pattern to video file.
@@ -465,6 +465,7 @@ def generate_launch_description():
         output="screen",
         condition=IfCondition(use_risk),
         parameters=[
+            alfin7_baseline_file,
             {
                 "detections_topic": effective_detections_for_risk_topic,
                 "image_topic": image_topic,
@@ -479,7 +480,7 @@ def generate_launch_description():
                 "use_freeze_detector": ParameterValue(use_freeze, value_type=bool),
                 "freeze_topic": freeze_topic,
                 "freeze_reason_topic": freeze_reason_topic,
-            }
+            },
         ],
     )
 

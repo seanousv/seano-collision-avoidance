@@ -230,13 +230,25 @@ class RiskEvaluatorNode(Node):
         self.declare_parameter("track_timeout_s", 1.0)
         self.declare_parameter("max_tracks", 30)
 
+        # Geometry profile / platform metadata
+        self.declare_parameter("geometry_profile_name", "UNSPECIFIED")
+        self.declare_parameter("visual_params_source", "UNSPECIFIED")
+        self.declare_parameter("vehicle_length_m", 0.70)
+        self.declare_parameter("vehicle_beam_m", 0.50)
+        self.declare_parameter("camera_height_m", 0.58)
+        self.declare_parameter("expected_image_width", 640)
+        self.declare_parameter("expected_image_height", 480)
+        self.declare_parameter("startup_image_geometry_grace_s", 2.0)
+
         # Camera proxy
-        self.declare_parameter("camera_hfov_deg", 112.96)
+        # These must be supplied explicitly from the active platform YAML.
+        # Do not silently inherit legacy SEANO BIMA30 values here.
+        self.declare_parameter("camera_hfov_deg", -1.0)
 
         # Domain
-        self.declare_parameter("center_band_ratio", 0.212)
-        self.declare_parameter("bottom_danger_ratio", 0.647)
-        self.declare_parameter("near_area_ratio", 0.0183)
+        self.declare_parameter("center_band_ratio", -1.0)
+        self.declare_parameter("bottom_danger_ratio", -1.0)
+        self.declare_parameter("near_area_ratio", -1.0)
 
         # Risk weights
         self.declare_parameter("w_proximity", 0.40)
@@ -372,6 +384,7 @@ class RiskEvaluatorNode(Node):
         self.image_h: Optional[int] = None
 
         self.frame_count = 0
+        self.node_start_time = time.time()
 
         # VQ internal/external
         self.vision_quality_internal = 1.0
@@ -482,6 +495,10 @@ class RiskEvaluatorNode(Node):
         self.get_logger().info(
             f"risk_evaluator_node started | cv={_HAS_CV} depth={self.qos.depth} "
             f"det={self.get_parameter('detections_topic').value} img={self.get_parameter('image_topic').value} "
+            f"profile={self.get_parameter('geometry_profile_name').value} "
+            f"visual_src={self.get_parameter('visual_params_source').value} "
+            f"expected={self.get_parameter('expected_image_width').value}x"
+            f"{self.get_parameter('expected_image_height').value} "
             f"ext_vq={self.get_parameter('use_external_vision_quality').value} "
             f"freeze={self.get_parameter('use_freeze_detector').value}"
         )
@@ -503,6 +520,21 @@ class RiskEvaluatorNode(Node):
             iou_match_thresh = float(self._candidate_value("iou_match_thresh", incoming))
             track_timeout_s = float(self._candidate_value("track_timeout_s", incoming))
             max_tracks = int(self._candidate_value("max_tracks", incoming))
+
+            geometry_profile_name = str(
+                self._candidate_value("geometry_profile_name", incoming)
+            ).strip()
+            visual_params_source = str(
+                self._candidate_value("visual_params_source", incoming)
+            ).strip()
+            vehicle_length_m = float(self._candidate_value("vehicle_length_m", incoming))
+            vehicle_beam_m = float(self._candidate_value("vehicle_beam_m", incoming))
+            camera_height_m = float(self._candidate_value("camera_height_m", incoming))
+            expected_image_width = int(self._candidate_value("expected_image_width", incoming))
+            expected_image_height = int(self._candidate_value("expected_image_height", incoming))
+            startup_image_geometry_grace_s = float(
+                self._candidate_value("startup_image_geometry_grace_s", incoming)
+            )
 
             camera_hfov_deg = float(self._candidate_value("camera_hfov_deg", incoming))
             center_band_ratio = float(self._candidate_value("center_band_ratio", incoming))
@@ -597,6 +629,21 @@ class RiskEvaluatorNode(Node):
                 return False, "track_timeout_s must be > 0"
             if max_tracks < 1:
                 return False, "max_tracks must be >= 1"
+
+        if not geometry_profile_name:
+            return False, "geometry_profile_name must not be empty"
+        if not visual_params_source:
+            return False, "visual_params_source must not be empty"
+        if vehicle_length_m <= 0.0:
+            return False, "vehicle_length_m must be > 0"
+        if vehicle_beam_m <= 0.0:
+            return False, "vehicle_beam_m must be > 0"
+        if camera_height_m <= 0.0:
+            return False, "camera_height_m must be > 0"
+        if expected_image_width < 1 or expected_image_height < 1:
+            return False, "expected_image_width and expected_image_height must be >= 1"
+        if startup_image_geometry_grace_s < 0.0:
+            return False, "startup_image_geometry_grace_s must be >= 0"
 
         if camera_hfov_deg <= 0.0 or camera_hfov_deg > 179.0:
             return False, "camera_hfov_deg must be in (0, 179]"
@@ -839,6 +886,24 @@ class RiskEvaluatorNode(Node):
         )
         return clamp(score, 0.0, 1.0)
 
+    def _image_geometry_ready(self, t: float) -> Tuple[bool, str]:
+        expected_w = int(self.get_parameter("expected_image_width").value)
+        expected_h = int(self.get_parameter("expected_image_height").value)
+        grace_s = float(self.get_parameter("startup_image_geometry_grace_s").value)
+
+        if self.image_w is None or self.image_h is None:
+            if (t - self.node_start_time) < grace_s:
+                return False, "startup_waiting_image"
+            return False, "missing_image_dimensions"
+
+        if int(self.image_w) != expected_w or int(self.image_h) != expected_h:
+            return (
+                False,
+                f"image_size_mismatch_{int(self.image_w)}x{int(self.image_h)}_expected_{expected_w}x{expected_h}",
+            )
+
+        return True, "ok"
+
     def _pick_image_for_stamp(self, target_stamp_sec: float) -> Optional[Image]:
         if not self.image_buf:
             return None
@@ -886,9 +951,12 @@ class RiskEvaluatorNode(Node):
         self._update_mode_state(t)
 
         det_dt_ms = None
+        fps = None
         if det_msg is not None:
             if self.last_det_t is not None:
                 det_dt_ms = float((t - self.last_det_t) * 1000.0)
+                if det_dt_ms > 1e-6:
+                    fps = 1000.0 / det_dt_ms
             self.last_det_t = t
 
         dets: List[Det] = []
@@ -907,8 +975,28 @@ class RiskEvaluatorNode(Node):
 
         # local_mode explicitly indicates evaluator-local state
         metrics["local_mode"] = self.mode
+        if fps is not None:
+            metrics["fps"] = float(fps)
 
-        if self.mode == "LOST_PERCEPTION":
+        geom_ready = bool(metrics.get("image_geometry_ready", True))
+        geom_status = str(metrics.get("image_geometry_status", "ok"))
+
+        if (not geom_ready) and self.mode != "LOST_PERCEPTION":
+            if geom_status == "startup_waiting_image":
+                cmd = str(self.get_parameter("cmd_hold").value)
+                metrics["vision_mode"] = "STARTUP_WAIT_IMAGE"
+                metrics["cmd"] = cmd
+                metrics["decision_gate"] = "WAIT_IMAGE_GEOMETRY"
+                metrics["reason_codes"] = ["WAIT_IMAGE_GEOMETRY"]
+            else:
+                cmd = str(self.get_parameter("cmd_stop").value)
+                overall_risk = max(float(overall_risk), 1.0 if self.last_det_rx_t > 0.0 else 0.60)
+                metrics["vision_mode"] = "GEOMETRY_INVALID"
+                metrics["cmd"] = cmd
+                metrics["decision_gate"] = "FORCED_GEOMETRY_INVALID"
+                metrics["reason_codes"] = ["IMAGE_GEOMETRY_INVALID", _ascii_safe(geom_status)]
+                self.tracks.clear()
+        elif self.mode == "LOST_PERCEPTION":
             cmd = str(self.get_parameter("cmd_stop").value)
             overall_risk = 1.0
             metrics["vision_mode"] = "LOST_PERCEPTION"
@@ -936,6 +1024,7 @@ class RiskEvaluatorNode(Node):
         metrics["proc_ms"] = float(proc_ms)
         metrics["source"] = source
         metrics["mode"] = self.mode
+        metrics["active_geometry_profile"] = str(self.get_parameter("geometry_profile_name").value)
 
         self.pub_risk.publish(Float32(data=float(overall_risk)))
         self.pub_cmd.publish(String(data=str(cmd)))
@@ -1184,6 +1273,8 @@ class RiskEvaluatorNode(Node):
     def _evaluate(
         self, t: float, det_dt_ms: Optional[float]
     ) -> Tuple[float, Optional[Track], dict]:
+        geom_ready, geom_status = self._image_geometry_ready(t)
+
         W = float(self.image_w or 1)
         H = float(self.image_h or 1)
         img_area = max(W * H, 1e-9)
@@ -1213,6 +1304,17 @@ class RiskEvaluatorNode(Node):
             "cmd": str(self.last_cmd),
             "mode": self.mode,
             "local_mode": self.mode,
+            "image_geometry_ready": bool(geom_ready),
+            "image_geometry_status": str(geom_status),
+            "expected_image_width": int(self.get_parameter("expected_image_width").value),
+            "expected_image_height": int(self.get_parameter("expected_image_height").value),
+            "image_width": None if self.image_w is None else int(self.image_w),
+            "image_height": None if self.image_h is None else int(self.image_h),
+            "geometry_profile_name": str(self.get_parameter("geometry_profile_name").value),
+            "visual_params_source": str(self.get_parameter("visual_params_source").value),
+            "vehicle_length_m": float(self.get_parameter("vehicle_length_m").value),
+            "vehicle_beam_m": float(self.get_parameter("vehicle_beam_m").value),
+            "camera_height_m": float(self.get_parameter("camera_height_m").value),
             "vision_quality": float(vq),
             "vision_quality_source": str(vq_src),
             "freeze": bool(freeze),
@@ -1231,6 +1333,10 @@ class RiskEvaluatorNode(Node):
         if det_age > det_stale_s and self.mode != "LOST_PERCEPTION":
             self.tracks.clear()
             metrics["status"] = "detections_stale_cleared"
+
+        if not geom_ready:
+            metrics["status"] = str(geom_status)
+            return 0.0, None, metrics
 
         if not self.tracks:
             return 0.0, None, metrics
@@ -1913,6 +2019,7 @@ class RiskEvaluatorNode(Node):
         fps = metrics.get("fps", None)
         det_dt_txt = "--" if det_dt is None else f"{float(det_dt):.0f}ms"
         fps_txt = "--" if fps is None else f"{float(fps):.1f}"
+        geom_status = _ascii_safe(str(metrics.get("image_geometry_status", "ok")))
 
         tg = metrics.get("target", None) if isinstance(metrics.get("target", None), dict) else None
         comp = (
@@ -1938,6 +2045,7 @@ class RiskEvaluatorNode(Node):
         lines.append(f"MODE: {vmode}   AVOID: {'ON' if avoid else 'OFF'}")
         lines.append(f"VQ: {vq:.2f}   TRK: {ntrk}   DET: {det_dt_txt}   FPS: {fps_txt}")
         lines.append(f"IMG_AGE: {img_age:.2f}s   FREEZE: {str(freeze)}   REASON: {fr}")
+        lines.append(f"GEOM: {geom_status}")
         lines.append(f"SITUATION: {situation}   STAGE: {risk_stage}")
         lines.append(f"GATE: {decision_gate}   DOM: {dominant_factor}")
         lines.append(f"{colregs}")

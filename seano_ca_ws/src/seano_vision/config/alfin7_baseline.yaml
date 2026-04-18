@@ -1,0 +1,23 @@
+# SEANO Alfin7 runtime visual geometry template
+# Isi nilai numerik ini secara eksplisit dari hasil FOV valid / kalibrasi kamera.
+# JANGAN biarkan kosong. Node risk evaluator sekarang fail-fast bila visual geometry
+# belum disuplai secara eksplisit, supaya tidak diam-diam memakai baseline lama.
+
+risk_evaluator_node:
+  ros__parameters:
+    geometry_profile_name: "SEANO_Alfin7_640x480"
+    visual_params_source: "FILL_WITH_CALIBRATION_OR_VALIDATED_FOV"
+
+    vehicle_length_m: 0.70
+    vehicle_beam_m: 0.50
+    camera_height_m: 0.58
+
+    expected_image_width: 640
+    expected_image_height: 480
+    startup_image_geometry_grace_s: 2.0
+
+    # WAJIB diisi dengan nilai runtime yang sudah Anda validasi.
+    camera_hfov_deg: 0.0
+    center_band_ratio: 0.0
+    bottom_danger_ratio: 0.0
+    near_area_ratio: 0.0

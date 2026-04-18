@@ -6,9 +6,11 @@
 
 
 # SEANO Collision Avoidance (ROS 2 Humble)
-## Vision-Based Collision Avoidance for USV SEANO BIMA30
+## Vision-Based Collision Avoidance for USV SEANO Alfin7
 
-This repository contains a ROS 2 Humble–based collision avoidance stack for **SEANO BIMA30**, a differential-thruster unmanned surface vehicle (USV). The project is developed and validated in two parallel baselines:
+This repository contains a ROS 2 Humble–based collision avoidance stack for **SEANO Alfin7**, a differential-thruster unmanned surface vehicle (USV).
+
+The current thesis baseline uses **SEANO Alfin7** as the active physical platform, with baseline geometry locked at `L = 0.70 m`, `B = 0.50 m`, `h_c = 0.58 m`, and runtime image resolution `640x480`. Parameters derived from camera FOV or camera calibration are intentionally not treated as final until valid camera data is available. The project is developed and validated in two parallel baselines:
 
 - **Simulation baseline** using **ArduPilot SITL + MAVROS + Mission Planner**
 - **Hardware baseline** using **Jetson + CUAV X7+ + USB camera**
@@ -96,7 +98,7 @@ These documents help distinguish:
 
 # 2. Vehicle Constraint and Control Philosophy
 
-SEANO BIMA30 uses **differential thrust**:
+SEANO Alfin7 uses **differential thrust**:
 
 - left motor
 - right motor
