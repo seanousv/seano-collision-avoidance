@@ -1,4 +1,5 @@
 # BASELINE PARAMETER LOCK
+
 ## Parameter Acuan Resmi untuk Thesis Baseline Saat Ini
 
 Dokumen ini dipakai untuk membedakan tiga kategori parameter:
@@ -10,7 +11,7 @@ Dokumen ini dipakai untuk membedakan tiga kategori parameter:
    Nilai default runtime aktif yang boleh dipakai untuk baseline sekarang, tetapi masih terbuka untuk tuning.
 
 3. **not-final-yet**
-   Belum boleh dianggap final karena masih menunggu data uji dinamik kapal, ESC/thruster, atau uji air.
+   Belum boleh dianggap final karena masih menunggu data FOV kamera, kalibrasi kamera, data uji dinamik kapal, ESC/thruster, atau uji air.
 
 ---
 
@@ -19,41 +20,56 @@ Dokumen ini dipakai untuk membedakan tiga kategori parameter:
 Dokumen ini dibuat agar:
 - angka yang dipakai di repo konsisten dengan angka yang dipakai di laporan TA,
 - pembaca bisa membedakan mana angka yang sudah dikunci dan mana yang masih tentatif,
-- tuning lapangan tidak mengaburkan baseline engineering yang sudah ada.
+- tuning lapangan tidak mengaburkan baseline engineering yang sudah ada,
+- migrasi baseline dari platform lama ke **SEANO Alfin7** terdokumentasi jelas.
 
 ---
 
-## 2. Vehicle and Camera Baseline (Design-Lock)
+## 2. Vehicle and Camera Baseline
+
+### 2.1 Design-lock
 
 Parameter berikut sudah boleh dianggap sebagai **baseline resmi saat ini**.
 
 | Parameter | Nilai | Status | Catatan |
 |---|---:|---|---|
-| panjang kapal `L` | 3.0 m | design-lock | basis geometri platform |
-| lebar kapal `B` | 1.70 m | design-lock | basis protected corridor minimum |
-| tinggi kamera `h_c` | 1.0 m | design-lock | baseline kamera aktif |
-| jarak antar pusat thruster `b_t` | 0.90 m | design-lock | basis analisis turning/mixing awal |
-| pitch kamera `alpha` | 0 deg | design-lock | baseline desain saat ini |
-| obstacle referensi lebar `W_o` | 1.5 m | design-lock | perahu kecil referensi |
-| obstacle referensi tinggi `H_o` | 1.0 m | design-lock | frontal obstacle referensi |
-| trigger distance desain `d_t` | 4.0 m | design-lock | baseline desain visual saat ini |
-| `camera_hfov_deg` | 112.96 deg | design-lock | nominal design value, belum hasil kalibrasi final |
+| panjang kapal `L` | 0.70 m | design-lock | basis geometri platform final |
+| lebar kapal `B` | 0.50 m | design-lock | basis protected corridor minimum |
+| tinggi kamera `h_c` | 0.58 m | design-lock | tinggi pemasangan kamera final |
+| resolusi citra `W` | 640 px | design-lock | runtime image width final |
+| resolusi citra `H` | 480 px | design-lock | runtime image height final |
+| pusat citra `c_x` | 320 px | design-lock | `W/2` |
+| pusat citra `c_y` | 240 px | design-lock | `H/2` |
+| protected corridor minimum `W_p,min` | 0.50 m | design-lock | minimum sama dengan lebar fisik kapal |
+
+### 2.2 Not-final-yet
+
+Parameter berikut **belum boleh dikunci sebagai angka final** karena masih menunggu data kamera yang valid.
+
+| Parameter | Nilai saat ini | Status | Catatan |
+|---|---:|---|---|
+| `camera_hfov_deg` | TBD | not-final-yet | menunggu datasheet valid atau hasil kalibrasi |
+| `camera_vfov_deg` | TBD | not-final-yet | menunggu datasheet valid atau hasil kalibrasi |
+| `f_x` | TBD | not-final-yet | menunggu kalibrasi kamera |
+| `f_y` | TBD | not-final-yet | menunggu kalibrasi kamera |
+| pitch kamera `alpha` | 0 deg (nominal) | not-final-yet | boleh diasumsikan nominal, belum final kalibrasi mount |
 
 ---
 
-## 3. Visual Risk Geometry Parameters (Baseline-Lock)
+## 3. Visual Risk Geometry Parameters
 
-Parameter berikut sudah cukup kuat untuk dipakai sebagai **baseline design values**.
+Parameter berikut **belum boleh dianggap final** sampai FOV kamera atau hasil kalibrasi final tersedia.
 
-| Parameter | Nilai | Status | Makna |
+| Parameter | Nilai saat ini | Status | Makna |
 |---|---:|---|---|
-| `center_band_ratio` | 0.212 | design-lock | koridor konflik minimum berbasis lebar kapal |
-| `bottom_danger_ratio` | 0.647 | design-lock | zona bawah yang merepresentasikan objek dekat/berisiko |
-| `near_area_ratio` | 0.0183 | design-lock | ambang bbox near untuk obstacle referensi pada 4 m |
+| `center_band_ratio` | TBD | not-final-yet | koridor konflik minimum berbasis lebar kapal dan HFOV |
+| `bottom_danger_ratio` | TBD | not-final-yet | zona bawah yang merepresentasikan objek dekat/berisiko |
+| `near_area_ratio` | TBD | not-final-yet | ambang bbox near berbasis geometri visual final |
 
 Catatan penting:
-- nilai di atas boleh dipakai sebagai **baseline aktif repo dan laporan**,
-- tetapi tetap harus dibaca sebagai **design values berbasis geometri dan FOV nominal**, bukan hasil camera calibration final.
+- nilai lama untuk platform 3.0 m tidak lagi menjadi baseline resmi,
+- tiga parameter di atas baru boleh diisi setelah FOV kamera A95 valid atau hasil kalibrasi final tersedia,
+- sampai saat itu, repo harus memperlakukan parameter ini sebagai **belum final**.
 
 ---
 
@@ -113,8 +129,8 @@ Parameter berikut harus dianggap **not-final-yet** sampai data dinamika kapal ny
 | `speed_max` | 0.55 | baseline-default | masih bisa dituning |
 
 Status keseluruhan kelompok ini:
-- **boleh dipakai sebagai runtime baseline saat ini**,
-- **belum final sebagai nilai dinamik kapal** sampai data uji yaw response dan uji air cukup.
+- boleh dipakai sebagai runtime baseline saat ini,
+- belum final sebagai nilai dinamik kapal sampai data uji yaw response dan uji air cukup.
 
 ---
 
@@ -133,7 +149,7 @@ Parameter berikut adalah **baseline integration defaults**, bukan hasil final ka
 | `bridge_command_timeout_s` | 0.5 | baseline-default | sah untuk baseline saat ini |
 
 Catatan:
-- untuk sidang/laporan, parameter ini sebaiknya dipresentasikan sebagai **integration-safe defaults**,
+- untuk sidang/laporan, parameter ini sebaiknya dipresentasikan sebagai integration-safe defaults,
 - bukan sebagai hasil tuning final propulsion system.
 
 ---
@@ -152,7 +168,7 @@ Catatan:
 | `ca_det_max_fps` | 8.0 | baseline-default | detector runtime practical default |
 
 Catatan:
-- angka ini sah sebagai **operational defaults**,
+- angka ini sah sebagai operational defaults,
 - tidak harus disebut sebagai angka desain final dalam laporan kecuali memang dipakai pada result utama yang dilaporkan.
 
 ---
@@ -162,11 +178,11 @@ Catatan:
 Gunakan aturan berikut:
 
 ### Boleh ditulis sebagai baseline resmi saat ini
-- dimensi kapal
-- geometri kamera nominal
-- `center_band_ratio`
-- `bottom_danger_ratio`
-- `near_area_ratio`
+- dimensi kapal Alfin7
+- tinggi kamera final
+- resolusi citra final
+- pusat citra nominal
+- protected corridor minimum
 - active launch baseline (`phase5`, `phase7`)
 
 ### Boleh ditulis sebagai default runtime aktif, tetapi jangan disebut final absolut
@@ -175,8 +191,16 @@ Gunakan aturan berikut:
 - speed/turn/mix parameters
 - PWM tuning
 - timeout tuning
+- detector runtime defaults
 
 ### Jangan diklaim final tanpa data tambahan
+- `camera_hfov_deg`
+- `camera_vfov_deg`
+- `f_x`
+- `f_y`
+- `center_band_ratio`
+- `bottom_danger_ratio`
+- `near_area_ratio`
 - final dynamic thresholds
 - final hardware control gains
 - final on-water safe envelope
@@ -186,7 +210,7 @@ Gunakan aturan berikut:
 ## 10. Kesimpulan Singkat
 
 Parameter thesis baseline saat ini harus dibaca seperti ini:
-
-- **geometri visual utama sudah cukup kuat untuk dikunci sebagai baseline design values**,
-- **runtime thresholds dan dynamic control parameters masih berstatus baseline-default / tunable**,
-- **repo dan laporan harus membedakan dengan tegas antara design-lock dan runtime-tuning**.
+- geometri platform Alfin7 dan resolusi citra sudah cukup kuat untuk dikunci sebagai baseline design values,
+- parameter visual berbasis FOV dan kalibrasi kamera masih berstatus not-final-yet,
+- runtime thresholds dan dynamic control parameters masih berstatus baseline-default / tunable,
+- repo dan laporan harus membedakan dengan tegas antara design-lock dan runtime-tuning.
