@@ -1,9 +1,7 @@
 # SEANO Alfin7 baseline pointer profile
-# This file is kept as the default entrypoint for compatibility.
-# Current meaning:
-# - use temporary hardware-safe values
-# - not final thesis constants
-# - replace after valid camera calibration / validated FOV is available
+# Default compatibility profile.
+# Current default = temporary hardware-safe profile at 640x480.
+# Not final thesis constants.
 
 risk_evaluator_node:
   ros__parameters:
