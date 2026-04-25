@@ -1,18 +1,5 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-# THESIS_ACTIVE_SIM_BASELINE
-#
-# This launch is the active simulation baseline for the thesis.
-# It should be read as the primary SITL evidence entry point for:
-# - mission -> avoid -> rejoin -> mission validation,
-# - rosbag collection,
-# - Phase 6 metrics extraction,
-# - controlled logic verification before hardware testing.
-#
-# Operational note:
-# - keep filename stable while thesis baseline and field evidence are still being locked.
-# - prefer documenting profile usage and parameters over renaming the file.
-#
 
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, ExecuteProcess, IncludeLaunchDescription
@@ -58,93 +45,270 @@ def _str_by_profile(
     )
 
 
+def _and_true(*lcs: LaunchConfiguration) -> PythonExpression:
+    pieces = []
+    for i, lc in enumerate(lcs):
+        if i > 0:
+            pieces.append(" and ")
+        pieces.extend(["'", lc, "'.lower() == 'true'"])
+    return PythonExpression(["'true' if (", *pieces, ") else 'false'"])
+
+
 def generate_launch_description():
+    pkg_share = FindPackageShare("seano_vision")
+
+    default_video_demo = PathJoinSubstitution(
+        [
+            EnvironmentVariable("HOME"),
+            "seano-collision-avoidance",
+            "seano_ca_ws",
+            "test_media",
+            "videodemo.mp4",
+        ]
+    )
+
     # ------------------------------------------------------------------
     # Common args
     # ------------------------------------------------------------------
     record = LaunchConfiguration("record")
     bag_name = LaunchConfiguration("bag_name")
-
     master_enable_on_start = LaunchConfiguration("master_enable_on_start")
     failsafe_stale_is_active = LaunchConfiguration("failsafe_stale_is_active")
 
     input_mode = LaunchConfiguration("input_mode")
     output_mode = LaunchConfiguration("output_mode")
-
     avoid_mode = LaunchConfiguration("avoid_mode")
     mission_mode_default = LaunchConfiguration("mission_mode_default")
     failsafe_mode = LaunchConfiguration("failsafe_mode")
 
-    # ------------------------------------------------------------------
-    # Test mode toggles
-    # ------------------------------------------------------------------
     use_ca_pipeline = LaunchConfiguration("use_ca_pipeline")
     use_takeover_manager = LaunchConfiguration("use_takeover_manager")
+    use_mode_manager = LaunchConfiguration("use_mode_manager")
 
     # ------------------------------------------------------------------
-    # BARU: runtime profile untuk Case C
-    #
-    # synthetic_light    = dummy camera + detector + risk, tanpa watchdog/freeze/vq/fusion
-    # synthetic_watchdog = synthetic_light + watchdog
-    # full               = semua pipeline perception aktif
+    # Runtime profile
     # ------------------------------------------------------------------
     ca_runtime_profile = LaunchConfiguration("ca_runtime_profile")
 
     # ------------------------------------------------------------------
-    # CA include args
+    # Camera args
     # ------------------------------------------------------------------
     ca_camera_launch = LaunchConfiguration("ca_camera_launch")
     ca_image_topic = LaunchConfiguration("ca_image_topic")
-
     ca_use_camera = LaunchConfiguration("ca_use_camera")
+
+    ca_camera_profile = LaunchConfiguration("ca_camera_profile")
+    ca_camera_source = LaunchConfiguration("ca_camera_source")
+    ca_camera_backend = LaunchConfiguration("ca_camera_backend")
+    ca_camera_url = LaunchConfiguration("ca_camera_url")
+    ca_camera_pipeline = LaunchConfiguration("ca_camera_pipeline")
+
+    ca_camera_device_path = LaunchConfiguration("ca_camera_device_path")
+    ca_camera_device_index = LaunchConfiguration("ca_camera_device_index")
+    ca_camera_device_fourcc = LaunchConfiguration("ca_camera_device_fourcc")
+    ca_camera_device_width = LaunchConfiguration("ca_camera_device_width")
+    ca_camera_device_height = LaunchConfiguration("ca_camera_device_height")
+    ca_camera_device_fps = LaunchConfiguration("ca_camera_device_fps")
+
+    ca_camera_topic_best_effort = LaunchConfiguration("ca_camera_topic_best_effort")
+    ca_camera_topic_reliable = LaunchConfiguration("ca_camera_topic_reliable")
+    ca_camera_frame_id = LaunchConfiguration("ca_camera_frame_id")
+    ca_camera_max_fps = LaunchConfiguration("ca_camera_max_fps")
+    ca_camera_max_age_ms = LaunchConfiguration("ca_camera_max_age_ms")
+
+    ca_camera_record = LaunchConfiguration("ca_camera_record")
+    ca_camera_bag_base_dir = LaunchConfiguration("ca_camera_bag_base_dir")
+    ca_camera_bag_prefix = LaunchConfiguration("ca_camera_bag_prefix")
+    ca_camera_duration_s = LaunchConfiguration("ca_camera_duration_s")
+
+    # ------------------------------------------------------------------
+    # CA / detector / risk args
+    # ------------------------------------------------------------------
     ca_use_detector = LaunchConfiguration("ca_use_detector")
-    ca_use_waterline = LaunchConfiguration("ca_use_waterline")
-    ca_use_fp_guard = LaunchConfiguration("ca_use_fp_guard")
-    ca_use_fusion = LaunchConfiguration("ca_use_fusion")
-    ca_use_vq = LaunchConfiguration("ca_use_vq")
-    ca_use_freeze = LaunchConfiguration("ca_use_freeze")
     ca_use_risk = LaunchConfiguration("ca_use_risk")
     ca_use_watchdog = LaunchConfiguration("ca_use_watchdog")
     ca_use_ca_viewer = LaunchConfiguration("ca_use_ca_viewer")
-    ca_use_wl_viewer = LaunchConfiguration("ca_use_wl_viewer")
+
+    ca_risk_profile = LaunchConfiguration("ca_risk_profile")
+    risk_profile_file = PathJoinSubstitution([pkg_share, "config", ca_risk_profile])
+
+    ca_annotated_topic = LaunchConfiguration("ca_annotated_topic")
+    ca_detections_topic = LaunchConfiguration("ca_detections_topic")
+    ca_risk_topic = LaunchConfiguration("ca_risk_topic")
+    ca_command_topic = LaunchConfiguration("ca_command_topic")
+    ca_mode_topic = LaunchConfiguration("ca_mode_topic")
+    ca_metrics_topic = LaunchConfiguration("ca_metrics_topic")
+    ca_debug_image_topic = LaunchConfiguration("ca_debug_image_topic")
+    ca_publish_debug_image = LaunchConfiguration("ca_publish_debug_image")
 
     ca_det_sub_reliability = LaunchConfiguration("ca_det_sub_reliability")
     ca_det_pub_reliability = LaunchConfiguration("ca_det_pub_reliability")
     ca_det_qos_depth = LaunchConfiguration("ca_det_qos_depth")
 
+    ca_det_model_path = LaunchConfiguration("ca_det_model_path")
+    ca_det_device = LaunchConfiguration("ca_det_device")
+    ca_det_imgsz = LaunchConfiguration("ca_det_imgsz")
+    ca_det_conf = LaunchConfiguration("ca_det_conf")
+    ca_det_iou = LaunchConfiguration("ca_det_iou")
+    ca_det_class_ids = LaunchConfiguration("ca_det_class_ids")
+    ca_det_max_det = LaunchConfiguration("ca_det_max_det")
+    ca_det_agnostic_nms = LaunchConfiguration("ca_det_agnostic_nms")
+    ca_det_half = LaunchConfiguration("ca_det_half")
+    ca_det_warmup = LaunchConfiguration("ca_det_warmup")
+    ca_det_max_fps = LaunchConfiguration("ca_det_max_fps")
+    ca_det_publish_annotated = LaunchConfiguration("ca_det_publish_annotated")
+    ca_det_publish_detections = LaunchConfiguration("ca_det_publish_detections")
+    ca_det_publish_empty_detections = LaunchConfiguration("ca_det_publish_empty_detections")
+
     wd_startup_grace_s = LaunchConfiguration("wd_startup_grace_s")
     wd_start_in_failsafe = LaunchConfiguration("wd_start_in_failsafe")
 
-    pkg_share = FindPackageShare("seano_vision")
+    # ------------------------------------------------------------------
+    # Optional camera include
+    # ------------------------------------------------------------------
+    camera_include_plain = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            PathJoinSubstitution([pkg_share, "launch", ca_camera_launch])
+        ),
+        condition=IfCondition(
+            PythonExpression(
+                [
+                    "'true' if ('",
+                    ca_use_camera,
+                    "'.lower() == 'true' and '",
+                    ca_camera_launch,
+                    "' != 'phase2_camera_source_test.launch.py') else 'false'",
+                ]
+            )
+        ),
+    )
+
+    camera_include_passthrough = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            PathJoinSubstitution([pkg_share, "launch", ca_camera_launch])
+        ),
+        condition=IfCondition(
+            PythonExpression(
+                [
+                    "'true' if ('",
+                    ca_use_camera,
+                    "'.lower() == 'true' and '",
+                    ca_camera_launch,
+                    "' == 'phase2_camera_source_test.launch.py') else 'false'",
+                ]
+            )
+        ),
+        launch_arguments={
+            "profile": ca_camera_profile,
+            "source": ca_camera_source,
+            "backend": ca_camera_backend,
+            "url": ca_camera_url,
+            "pipeline": ca_camera_pipeline,
+            "device_path": ca_camera_device_path,
+            "device_index": ca_camera_device_index,
+            "device_fourcc": ca_camera_device_fourcc,
+            "device_width": ca_camera_device_width,
+            "device_height": ca_camera_device_height,
+            "device_fps": ca_camera_device_fps,
+            "topic_best_effort": ca_camera_topic_best_effort,
+            "topic_reliable": ca_camera_topic_reliable,
+            "frame_id": ca_camera_frame_id,
+            "max_fps": ca_camera_max_fps,
+            "max_age_ms": ca_camera_max_age_ms,
+            "record": ca_camera_record,
+            "bag_base_dir": ca_camera_bag_base_dir,
+            "bag_prefix": ca_camera_bag_prefix,
+            "duration_s": ca_camera_duration_s,
+        }.items(),
+    )
 
     # ------------------------------------------------------------------
-    # Include full / light CA pipeline (conditional)
+    # Detector / risk / watchdog
     # ------------------------------------------------------------------
-    ca_include = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            PathJoinSubstitution([pkg_share, "launch", "demo_full_ca.launch.py"])
-        ),
-        condition=IfCondition(use_ca_pipeline),
-        launch_arguments={
-            "camera_launch": ca_camera_launch,
-            "image_topic": ca_image_topic,
-            "use_camera": ca_use_camera,
-            "use_detector": ca_use_detector,
-            "use_waterline": ca_use_waterline,
-            "use_fp_guard": ca_use_fp_guard,
-            "use_fusion": ca_use_fusion,
-            "use_vq": ca_use_vq,
-            "use_freeze": ca_use_freeze,
-            "use_risk": ca_use_risk,
-            "use_watchdog": ca_use_watchdog,
-            "use_ca_viewer": ca_use_ca_viewer,
-            "use_wl_viewer": ca_use_wl_viewer,
-            "det_sub_reliability": ca_det_sub_reliability,
-            "det_pub_reliability": ca_det_pub_reliability,
-            "det_qos_depth": ca_det_qos_depth,
-            "wd_startup_grace_s": wd_startup_grace_s,
-            "wd_start_in_failsafe": wd_start_in_failsafe,
-        }.items(),
+    detector_node = Node(
+        package="seano_vision",
+        executable="detector_node",
+        name="detector_node",
+        output="screen",
+        condition=IfCondition(_and_true(use_ca_pipeline, ca_use_detector)),
+        parameters=[
+            {
+                "sub_image": ca_image_topic,
+                "pub_image": ca_annotated_topic,
+                "pub_det": ca_detections_topic,
+                "publish_annotated": ParameterValue(ca_det_publish_annotated, value_type=bool),
+                "publish_detections": ParameterValue(ca_det_publish_detections, value_type=bool),
+                "publish_empty_detections": ParameterValue(
+                    ca_det_publish_empty_detections, value_type=bool
+                ),
+                "model_path": ca_det_model_path,
+                "device": ca_det_device,
+                "imgsz": ParameterValue(ca_det_imgsz, value_type=int),
+                "conf": ParameterValue(ca_det_conf, value_type=float),
+                "iou": ParameterValue(ca_det_iou, value_type=float),
+                "class_ids": ca_det_class_ids,
+                "max_det": ParameterValue(ca_det_max_det, value_type=int),
+                "agnostic_nms": ParameterValue(ca_det_agnostic_nms, value_type=bool),
+                "half": ParameterValue(ca_det_half, value_type=bool),
+                "warmup": ParameterValue(ca_det_warmup, value_type=bool),
+                "max_fps": ParameterValue(ca_det_max_fps, value_type=float),
+                "qos_depth": ParameterValue(ca_det_qos_depth, value_type=int),
+                "sub_reliability": ca_det_sub_reliability,
+                "pub_det_reliability": ca_det_pub_reliability,
+                "pub_image_reliability": ca_det_pub_reliability,
+            }
+        ],
+    )
+
+    risk_node = Node(
+        package="seano_vision",
+        executable="risk_evaluator_node",
+        name="risk_evaluator_node",
+        output="screen",
+        condition=IfCondition(_and_true(use_ca_pipeline, ca_use_risk)),
+        parameters=[
+            risk_profile_file,
+            {
+                "detections_topic": ca_detections_topic,
+                "image_topic": ca_image_topic,
+                "risk_topic": ca_risk_topic,
+                "command_topic": ca_command_topic,
+                "mode_topic": ca_mode_topic,
+                "metrics_topic": ca_metrics_topic,
+                "debug_image_topic": ca_debug_image_topic,
+                "publish_debug_image": ParameterValue(ca_publish_debug_image, value_type=bool),
+                "use_external_vision_quality": False,
+                "use_freeze_detector": False,
+            },
+        ],
+    )
+
+    watchdog_node = Node(
+        package="seano_vision",
+        executable="watchdog_failsafe_node",
+        name="watchdog_failsafe_node",
+        output="screen",
+        condition=IfCondition(_and_true(use_ca_pipeline, ca_use_watchdog)),
+        parameters=[
+            {
+                "image_topic": ca_image_topic,
+                "detections_topic": ca_detections_topic,
+                "risk_topic": ca_risk_topic,
+                "command_topic": ca_command_topic,
+                "mode_topic": ca_mode_topic,
+                "startup_grace_s": ParameterValue(wd_startup_grace_s, value_type=float),
+                "start_in_failsafe": ParameterValue(wd_start_in_failsafe, value_type=bool),
+            }
+        ],
+    )
+
+    ca_viewer = Node(
+        package="image_tools",
+        executable="showimage",
+        name="show_ca_debug",
+        output="screen",
+        condition=IfCondition(ca_use_ca_viewer),
+        remappings=[("image", ca_debug_image_topic)],
     )
 
     # ------------------------------------------------------------------
@@ -224,7 +388,7 @@ def generate_launch_description():
     )
 
     # ------------------------------------------------------------------
-    # takeover manager (conditional)
+    # Takeover manager
     # ------------------------------------------------------------------
     takeover = Node(
         package="seano_vision",
@@ -234,7 +398,7 @@ def generate_launch_description():
         condition=IfCondition(use_takeover_manager),
         parameters=[
             {
-                "command_topic": "/ca/command_safe",
+                "command_topic": ca_command_topic,
                 "failsafe_active_topic": "/ca/failsafe_active",
                 "out_left_topic": "/seano/auto/left_cmd",
                 "out_right_topic": "/seano/auto/right_cmd",
@@ -244,19 +408,20 @@ def generate_launch_description():
                 "master_enable_on_start": ParameterValue(master_enable_on_start, value_type=bool),
                 "cruise_speed": 0.30,
                 "turn_cmd": 0.55,
-                "diff_mix_gain": 0.7,
+                "diff_mix_gain": 0.70,
             }
         ],
     )
 
     # ------------------------------------------------------------------
-    # mission / mode manager
+    # Mission / mode manager
     # ------------------------------------------------------------------
     mode_mgr = Node(
         package="seano_vision",
         executable="mission_mode_manager_node",
         name="mission_mode_manager_node",
         output="screen",
+        condition=IfCondition(use_mode_manager),
         parameters=[
             {
                 "avoid_mode": avoid_mode,
@@ -278,14 +443,16 @@ def generate_launch_description():
     bag_path = PathJoinSubstitution([bag_dir, bag_name])
 
     topics = [
-        "/ca/command",
-        "/ca/command_safe",
+        ca_image_topic,
+        ca_annotated_topic,
+        ca_detections_topic,
+        ca_risk_topic,
+        ca_command_topic,
         "/ca/failsafe_active",
         "/ca/failsafe_reason",
-        "/ca/mode",
-        "/ca/watchdog_status",
-        "/vision/freeze",
-        "/vision/freeze_reason",
+        ca_mode_topic,
+        ca_metrics_topic,
+        ca_debug_image_topic,
         "/seano/auto_master_enable",
         "/seano/auto_enable",
         "/seano/rc_override_enable",
@@ -306,21 +473,22 @@ def generate_launch_description():
 
     return LaunchDescription(
         [
-            # common
+            # Common
             DeclareLaunchArgument("record", default_value="false"),
             DeclareLaunchArgument("bag_name", default_value="phase5_mission_avoid"),
             DeclareLaunchArgument("master_enable_on_start", default_value="false"),
             DeclareLaunchArgument("failsafe_stale_is_active", default_value="true"),
-            # mode uji utama
+            # Main toggles
             DeclareLaunchArgument("use_ca_pipeline", default_value="true"),
             DeclareLaunchArgument("use_takeover_manager", default_value="true"),
-            # BARU: profile runtime perception
+            DeclareLaunchArgument("use_mode_manager", default_value="true"),
+            # Runtime profile
             DeclareLaunchArgument(
                 "ca_runtime_profile",
                 default_value="synthetic_light",
                 description="synthetic_light | synthetic_watchdog | full",
             ),
-            # camera include selection
+            # Camera
             DeclareLaunchArgument(
                 "ca_camera_launch",
                 default_value="phase2_camera_source_test.launch.py",
@@ -329,41 +497,44 @@ def generate_launch_description():
                 "ca_image_topic",
                 default_value="/seano/camera/image_raw_reliable",
             ),
-            # granular toggles
-            # synthetic_light    : camera + detector + risk, watchdog OFF
-            # synthetic_watchdog : camera + detector + risk + watchdog
-            # full               : semua aktif
             DeclareLaunchArgument(
                 "ca_use_camera",
                 default_value=_bool_by_profile(
                     ca_runtime_profile, ["synthetic_light", "synthetic_watchdog", "full"]
                 ),
             ),
+            DeclareLaunchArgument("ca_camera_profile", default_value="custom"),
+            DeclareLaunchArgument("ca_camera_source", default_value="url"),
+            DeclareLaunchArgument("ca_camera_backend", default_value="opencv"),
+            DeclareLaunchArgument("ca_camera_url", default_value=default_video_demo),
+            DeclareLaunchArgument("ca_camera_pipeline", default_value=""),
+            DeclareLaunchArgument("ca_camera_device_path", default_value="/dev/video0"),
+            DeclareLaunchArgument("ca_camera_device_index", default_value="0"),
+            DeclareLaunchArgument("ca_camera_device_fourcc", default_value="MJPG"),
+            DeclareLaunchArgument("ca_camera_device_width", default_value="640"),
+            DeclareLaunchArgument("ca_camera_device_height", default_value="480"),
+            DeclareLaunchArgument("ca_camera_device_fps", default_value="30"),
+            DeclareLaunchArgument(
+                "ca_camera_topic_best_effort",
+                default_value="/seano/camera/image_raw",
+            ),
+            DeclareLaunchArgument(
+                "ca_camera_topic_reliable",
+                default_value="/seano/camera/image_raw_reliable",
+            ),
+            DeclareLaunchArgument("ca_camera_frame_id", default_value="camera_link"),
+            DeclareLaunchArgument("ca_camera_max_fps", default_value="4.0"),
+            DeclareLaunchArgument("ca_camera_max_age_ms", default_value="250"),
+            DeclareLaunchArgument("ca_camera_record", default_value="false"),
+            DeclareLaunchArgument("ca_camera_bag_base_dir", default_value=""),
+            DeclareLaunchArgument("ca_camera_bag_prefix", default_value="phase5_camera"),
+            DeclareLaunchArgument("ca_camera_duration_s", default_value="0"),
+            # Detector / risk / watchdog
             DeclareLaunchArgument(
                 "ca_use_detector",
                 default_value=_bool_by_profile(
                     ca_runtime_profile, ["synthetic_light", "synthetic_watchdog", "full"]
                 ),
-            ),
-            DeclareLaunchArgument(
-                "ca_use_waterline",
-                default_value=_bool_by_profile(ca_runtime_profile, ["full"]),
-            ),
-            DeclareLaunchArgument(
-                "ca_use_fp_guard",
-                default_value=_bool_by_profile(ca_runtime_profile, ["full"]),
-            ),
-            DeclareLaunchArgument(
-                "ca_use_fusion",
-                default_value=_bool_by_profile(ca_runtime_profile, ["full"]),
-            ),
-            DeclareLaunchArgument(
-                "ca_use_vq",
-                default_value=_bool_by_profile(ca_runtime_profile, ["full"]),
-            ),
-            DeclareLaunchArgument(
-                "ca_use_freeze",
-                default_value=_bool_by_profile(ca_runtime_profile, ["full"]),
             ),
             DeclareLaunchArgument(
                 "ca_use_risk",
@@ -376,23 +547,60 @@ def generate_launch_description():
                 default_value=_bool_by_profile(ca_runtime_profile, ["synthetic_watchdog", "full"]),
             ),
             DeclareLaunchArgument("ca_use_ca_viewer", default_value="false"),
-            DeclareLaunchArgument("ca_use_wl_viewer", default_value="false"),
+            # IMPORTANT: paksa profile videodemo sebagai default Phase 5
+            DeclareLaunchArgument(
+                "ca_risk_profile",
+                default_value="alfin7_videodemo.yaml",
+            ),
+            DeclareLaunchArgument(
+                "ca_annotated_topic",
+                default_value="/camera/image_annotated",
+            ),
+            DeclareLaunchArgument(
+                "ca_detections_topic",
+                default_value="/camera/detections",
+            ),
+            DeclareLaunchArgument("ca_risk_topic", default_value="/ca/risk"),
+            DeclareLaunchArgument("ca_command_topic", default_value="/ca/command_safe"),
+            DeclareLaunchArgument("ca_mode_topic", default_value="/ca/mode"),
+            DeclareLaunchArgument("ca_metrics_topic", default_value="/ca/metrics"),
+            DeclareLaunchArgument("ca_debug_image_topic", default_value="/ca/debug_image"),
+            DeclareLaunchArgument("ca_publish_debug_image", default_value="true"),
             DeclareLaunchArgument("ca_det_sub_reliability", default_value="reliable"),
             DeclareLaunchArgument("ca_det_pub_reliability", default_value="reliable"),
-            DeclareLaunchArgument("ca_det_qos_depth", default_value="10"),
+            DeclareLaunchArgument("ca_det_qos_depth", default_value="1"),
+            DeclareLaunchArgument("ca_det_model_path", default_value="yolov8n.pt"),
+            DeclareLaunchArgument("ca_det_device", default_value=""),
+            DeclareLaunchArgument("ca_det_imgsz", default_value="416"),
+            DeclareLaunchArgument("ca_det_conf", default_value="0.20"),
+            DeclareLaunchArgument("ca_det_iou", default_value="0.45"),
+            DeclareLaunchArgument("ca_det_class_ids", default_value="ALL"),
+            DeclareLaunchArgument("ca_det_max_det", default_value="30"),
+            DeclareLaunchArgument("ca_det_agnostic_nms", default_value="false"),
+            DeclareLaunchArgument("ca_det_half", default_value="false"),
+            DeclareLaunchArgument("ca_det_warmup", default_value="true"),
+            DeclareLaunchArgument("ca_det_max_fps", default_value="2.0"),
+            DeclareLaunchArgument("ca_det_publish_annotated", default_value="true"),
+            DeclareLaunchArgument("ca_det_publish_detections", default_value="true"),
+            DeclareLaunchArgument("ca_det_publish_empty_detections", default_value="true"),
             DeclareLaunchArgument(
                 "wd_startup_grace_s",
                 default_value=_str_by_profile(ca_runtime_profile, "3.0", "8.0"),
             ),
             DeclareLaunchArgument("wd_start_in_failsafe", default_value="false"),
-            # bridge / mode policy
+            # Bridge / mode policy
             DeclareLaunchArgument("input_mode", default_value="left_right"),
             DeclareLaunchArgument("output_mode", default_value="rc_thr_steer"),
             DeclareLaunchArgument("avoid_mode", default_value="MANUAL"),
             DeclareLaunchArgument("mission_mode_default", default_value="AUTO"),
             DeclareLaunchArgument("failsafe_mode", default_value="MANUAL"),
-            # actions
-            ca_include,
+            # Actions
+            camera_include_plain,
+            camera_include_passthrough,
+            detector_node,
+            risk_node,
+            watchdog_node,
+            ca_viewer,
             mux,
             limiter,
             bridge,
