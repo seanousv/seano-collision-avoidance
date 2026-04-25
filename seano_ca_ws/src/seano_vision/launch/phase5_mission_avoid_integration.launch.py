@@ -57,21 +57,15 @@ def _and_true(*lcs: LaunchConfiguration) -> PythonExpression:
 def generate_launch_description():
     pkg_share = FindPackageShare("seano_vision")
 
-    default_video_demo = PathJoinSubstitution(
-        [
-            EnvironmentVariable("HOME"),
-            "seano-collision-avoidance",
-            "seano_ca_ws",
-            "test_media",
-            "videodemo.mp4",
-        ]
-    )
-
     # ------------------------------------------------------------------
     # Common args
     # ------------------------------------------------------------------
     record = LaunchConfiguration("record")
     bag_name = LaunchConfiguration("bag_name")
+    use_event_logger = LaunchConfiguration("use_event_logger")
+    event_log_root = LaunchConfiguration("event_log_root")
+    event_run_id = LaunchConfiguration("event_run_id")
+    event_frame_max_age_s = LaunchConfiguration("event_frame_max_age_s")
     master_enable_on_start = LaunchConfiguration("master_enable_on_start")
     failsafe_stale_is_active = LaunchConfiguration("failsafe_stale_is_active")
 
@@ -270,12 +264,12 @@ def generate_launch_description():
             risk_profile_file,
             {
                 "detections_topic": ca_detections_topic,
-                "image_topic": ca_image_topic,
+                "image_topic": "/camera/image_annotated",
                 "risk_topic": ca_risk_topic,
                 "command_topic": ca_command_topic,
                 "mode_topic": ca_mode_topic,
                 "metrics_topic": ca_metrics_topic,
-                "debug_image_topic": ca_debug_image_topic,
+                "debug_image_topic": "/ca/debug_image",
                 "publish_debug_image": ParameterValue(ca_publish_debug_image, value_type=bool),
                 "use_external_vision_quality": False,
                 "use_freeze_detector": False,
@@ -291,7 +285,7 @@ def generate_launch_description():
         condition=IfCondition(_and_true(use_ca_pipeline, ca_use_watchdog)),
         parameters=[
             {
-                "image_topic": ca_image_topic,
+                "image_topic": "/ca/debug_image",
                 "detections_topic": ca_detections_topic,
                 "risk_topic": ca_risk_topic,
                 "command_topic": ca_command_topic,
@@ -398,6 +392,8 @@ def generate_launch_description():
         condition=IfCondition(use_takeover_manager),
         parameters=[
             {
+                "master_auto_enable_delay_s": 25.0,
+                "master_auto_enable_after_startup": True,
                 "command_topic": ca_command_topic,
                 "failsafe_active_topic": "/ca/failsafe_active",
                 "out_left_topic": "/seano/auto/left_cmd",
@@ -437,6 +433,48 @@ def generate_launch_description():
     )
 
     # ------------------------------------------------------------------
+    # event logger
+    # ------------------------------------------------------------------
+    event_logger = Node(
+        package="seano_vision",
+        executable="event_logger_node",
+        name="event_logger_node",
+        output="screen",
+        condition=IfCondition(use_event_logger),
+        parameters=[
+            {
+                "log_root": event_log_root,
+                "run_id": event_run_id,
+                "image_topic": "/ca/debug_image",
+                "avoid_state_topic": "/ca/mode_manager_state",
+                "ca_mode_topic": "/ca/mode",
+                "mode_event_topic": "/ca/mode_manager_event",
+                "command_safe_topic": "/ca/command_safe",
+                "command_raw_topic": "/ca/command",
+                "risk_topic": "/ca/risk",
+                "failsafe_active_topic": "/ca/failsafe_active",
+                "auto_master_enable_topic": "/seano/auto_master_enable",
+                "auto_enable_topic": "/seano/auto_enable",
+                "rc_override_enable_topic": "/seano/rc_override_enable",
+                "manual_left_cmd_topic": "/seano/manual/left_cmd",
+                "manual_right_cmd_topic": "/seano/manual/right_cmd",
+                "auto_left_cmd_topic": "/seano/auto/left_cmd",
+                "auto_right_cmd_topic": "/seano/auto/right_cmd",
+                "selected_left_cmd_topic": "/seano/selected/left_cmd",
+                "selected_right_cmd_topic": "/seano/selected/right_cmd",
+                "left_cmd_topic": "/seano/left_cmd",
+                "right_cmd_topic": "/seano/right_cmd",
+                "limiter_reason_topic": "/seano/limiter_reason",
+                "rc_override_topic": "/mavros/rc/override",
+                "frame_max_age_s": ParameterValue(event_frame_max_age_s, value_type=float),
+                "save_frames": True,
+                "float_epsilon": 0.02,
+                "min_event_interval_s": 0.05,
+            }
+        ],
+    )
+
+    # ------------------------------------------------------------------
     # rosbag record
     # ------------------------------------------------------------------
     bag_dir = PathJoinSubstitution([EnvironmentVariable("HOME"), "bags"])
@@ -470,24 +508,23 @@ def generate_launch_description():
         cmd=["ros2", "bag", "record", "-o", bag_path, *topics],
         output="screen",
     )
-
     return LaunchDescription(
         [
             # Common
             DeclareLaunchArgument("record", default_value="false"),
             DeclareLaunchArgument("bag_name", default_value="phase5_mission_avoid"),
+            DeclareLaunchArgument("use_event_logger", default_value="true"),
+            DeclareLaunchArgument("event_log_root", default_value="~/seano_event_logs"),
+            DeclareLaunchArgument("event_run_id", default_value=""),
+            DeclareLaunchArgument("event_frame_max_age_s", default_value="1.0"),
             DeclareLaunchArgument("master_enable_on_start", default_value="false"),
-            DeclareLaunchArgument("failsafe_stale_is_active", default_value="true"),
+            DeclareLaunchArgument("failsafe_stale_is_active", default_value="false"),
             # Main toggles
             DeclareLaunchArgument("use_ca_pipeline", default_value="true"),
             DeclareLaunchArgument("use_takeover_manager", default_value="true"),
             DeclareLaunchArgument("use_mode_manager", default_value="true"),
             # Runtime profile
-            DeclareLaunchArgument(
-                "ca_runtime_profile",
-                default_value="synthetic_light",
-                description="synthetic_light | synthetic_watchdog | full",
-            ),
+            DeclareLaunchArgument("ca_runtime_profile", default_value="synthetic_light"),
             # Camera
             DeclareLaunchArgument(
                 "ca_camera_launch",
@@ -506,7 +543,10 @@ def generate_launch_description():
             DeclareLaunchArgument("ca_camera_profile", default_value="custom"),
             DeclareLaunchArgument("ca_camera_source", default_value="url"),
             DeclareLaunchArgument("ca_camera_backend", default_value="opencv"),
-            DeclareLaunchArgument("ca_camera_url", default_value=default_video_demo),
+            DeclareLaunchArgument(
+                "ca_camera_url",
+                default_value="/home/seano/seano-collision-avoidance/seano_ca_ws/test_media/videodemo.mp4",
+            ),
             DeclareLaunchArgument("ca_camera_pipeline", default_value=""),
             DeclareLaunchArgument("ca_camera_device_path", default_value="/dev/video0"),
             DeclareLaunchArgument("ca_camera_device_index", default_value="0"),
@@ -524,7 +564,7 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument("ca_camera_frame_id", default_value="camera_link"),
             DeclareLaunchArgument("ca_camera_max_fps", default_value="4.0"),
-            DeclareLaunchArgument("ca_camera_max_age_ms", default_value="250"),
+            DeclareLaunchArgument("ca_camera_max_age_ms", default_value="2000"),
             DeclareLaunchArgument("ca_camera_record", default_value="false"),
             DeclareLaunchArgument("ca_camera_bag_base_dir", default_value=""),
             DeclareLaunchArgument("ca_camera_bag_prefix", default_value="phase5_camera"),
@@ -571,15 +611,15 @@ def generate_launch_description():
             DeclareLaunchArgument("ca_det_qos_depth", default_value="1"),
             DeclareLaunchArgument("ca_det_model_path", default_value="yolov8n.pt"),
             DeclareLaunchArgument("ca_det_device", default_value=""),
-            DeclareLaunchArgument("ca_det_imgsz", default_value="416"),
+            DeclareLaunchArgument("ca_det_imgsz", default_value="320"),
             DeclareLaunchArgument("ca_det_conf", default_value="0.20"),
             DeclareLaunchArgument("ca_det_iou", default_value="0.45"),
             DeclareLaunchArgument("ca_det_class_ids", default_value="ALL"),
             DeclareLaunchArgument("ca_det_max_det", default_value="30"),
             DeclareLaunchArgument("ca_det_agnostic_nms", default_value="false"),
             DeclareLaunchArgument("ca_det_half", default_value="false"),
-            DeclareLaunchArgument("ca_det_warmup", default_value="true"),
-            DeclareLaunchArgument("ca_det_max_fps", default_value="2.0"),
+            DeclareLaunchArgument("ca_det_warmup", default_value="false"),
+            DeclareLaunchArgument("ca_det_max_fps", default_value="1.0"),
             DeclareLaunchArgument("ca_det_publish_annotated", default_value="true"),
             DeclareLaunchArgument("ca_det_publish_detections", default_value="true"),
             DeclareLaunchArgument("ca_det_publish_empty_detections", default_value="true"),
@@ -606,6 +646,7 @@ def generate_launch_description():
             bridge,
             takeover,
             mode_mgr,
+            event_logger,
             bag_record,
         ]
     )

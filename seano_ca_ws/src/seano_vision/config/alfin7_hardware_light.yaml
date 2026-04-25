@@ -1,0 +1,48 @@
+# SEANO Alfin7 temporary hardware profile
+# Not final thesis constants.
+
+risk_evaluator_node:
+  ros__parameters:
+    geometry_profile_name: "SEANO_Alfin7_HARDWARE_640x480_TEMP"
+    visual_params_source: "TEMP_BOX_SPEC_65_TO_70_DEG"
+
+    vehicle_length_m: 0.70
+    vehicle_beam_m: 0.50
+    camera_height_m: 0.58
+
+    expected_image_width: 640
+    expected_image_height: 480
+    startup_image_geometry_grace_s: 2.0
+
+    camera_hfov_deg: 67.5
+    center_band_ratio: 0.30
+    bottom_danger_ratio: 0.55
+    near_area_ratio: 0.010
+
+    min_det_score: 0.45
+    allow_class_ids: [""]
+    deny_class_ids: [""]
+
+    enter_avoid_risk: 0.45
+    exit_avoid_risk: 0.28
+
+    risk_slow_threshold: 0.35
+    risk_turn_slow_threshold: 0.45
+    risk_turn_threshold: 0.60
+    risk_stop_threshold: 0.78
+
+    ttc_score_horizon_s: 8.0
+    vttc_turn_threshold_s: 6.0
+    vttc_stop_threshold_s: 2.0
+
+    min_cmd_hold_s: 0.35
+    risk_ema_alpha: 0.45
+
+    track_timeout_s: 0.60
+    detections_stale_s: 0.60
+    image_timeout_s: 1.20
+
+    use_external_vision_quality: false
+    use_freeze_detector: false
+
+    publish_debug_image: false

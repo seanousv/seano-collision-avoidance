@@ -394,5 +394,107 @@ def main(args=None) -> None:
         rclpy.shutdown()
 
 
+# ---------------------------------------------------------------------------
+# _SEANO_INTERNAL_DELAYED_MASTER_PATCH_V1
+# Internal startup guard for AutoTakeoverManager.
+#
+# Reason:
+# - Camera and detector need warm-up time.
+# - If master is enabled too early, startup STOP/lost-perception transient
+#   forces AVOID before perception is stable.
+# - If master stays false forever, /ca/mode_manager_state stays MISSION.
+#
+# Behavior:
+# - Start with master disabled.
+# - After master_auto_enable_delay_s, enable master inside this node.
+# - No external ros2 param set process is needed.
+# ---------------------------------------------------------------------------
+
+
+def _seano_install_internal_delayed_master_patch():
+    import time
+
+    AutoClass = AutoTakeoverManager
+    if getattr(AutoClass, "_seano_internal_delayed_master_installed", False):
+        return
+
+    _orig_init = AutoClass.__init__
+
+    def _safe_declare(self, name, value):
+        try:
+            self.declare_parameter(name, value)
+        except Exception:
+            pass
+        try:
+            return self.get_parameter(name).value
+        except Exception:
+            return value
+
+    def _set_master_flag(self, value: bool):
+        # Most current code uses self.master_enabled.
+        # Some older variants may use self.master_enable.
+        try:
+            self.master_enabled = bool(value)
+        except Exception:
+            pass
+        try:
+            self.master_enable = bool(value)
+        except Exception:
+            pass
+
+    def _master_guard_tick(self):
+        if getattr(self, "_seano_master_guard_done", False):
+            return
+        if not getattr(self, "_seano_master_guard_enable", True):
+            return
+
+        elapsed = time.monotonic() - getattr(self, "_seano_master_guard_t0", time.monotonic())
+        delay_s = float(getattr(self, "_seano_master_guard_delay_s", 25.0))
+
+        if elapsed < delay_s:
+            return
+
+        self._seano_set_master_flag(True)
+        self._seano_master_guard_done = True
+
+        try:
+            self.get_logger().info(
+                f"[SEANO] startup guard done: master_enabled=True after {elapsed:.1f}s"
+            )
+        except Exception:
+            pass
+
+    def _patched_init(self, *args, **kwargs):
+        _orig_init(self, *args, **kwargs)
+
+        self._seano_master_guard_enable = bool(
+            _safe_declare(self, "master_auto_enable_after_startup", True)
+        )
+        self._seano_master_guard_delay_s = float(
+            _safe_declare(self, "master_auto_enable_delay_s", 25.0)
+        )
+        self._seano_master_guard_t0 = time.monotonic()
+        self._seano_master_guard_done = False
+
+        if self._seano_master_guard_enable and self._seano_master_guard_delay_s > 0.0:
+            self._seano_set_master_flag(False)
+            self.create_timer(0.25, self._seano_master_guard_tick)
+            try:
+                self.get_logger().info(
+                    f"[SEANO] startup guard active: master held OFF for "
+                    f"{self._seano_master_guard_delay_s:.1f}s"
+                )
+            except Exception:
+                pass
+
+    AutoClass._seano_set_master_flag = _set_master_flag
+    AutoClass._seano_master_guard_tick = _master_guard_tick
+    AutoClass.__init__ = _patched_init
+    AutoClass._seano_internal_delayed_master_installed = True
+
+
+_seano_install_internal_delayed_master_patch()
+
+
 if __name__ == "__main__":
     main()

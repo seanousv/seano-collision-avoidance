@@ -84,6 +84,7 @@ setup(
             "auto_controller_stub_node = seano_vision.auto_controller_stub_node:main",
             "test_maneuver_node = seano_vision.test_maneuver_node:main",
             "mission_mode_manager_node = seano_vision.mission_mode_manager_node:main",
+            "event_logger_node = seano_vision.event_logger_node:main",
         ],
     },
 )

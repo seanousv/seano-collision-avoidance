@@ -105,6 +105,10 @@ def generate_launch_description():
     # ------------------------------------------------------------------
     record = LaunchConfiguration("record")
     bag_name = LaunchConfiguration("bag_name")
+    use_event_logger = LaunchConfiguration("use_event_logger")
+    event_log_root = LaunchConfiguration("event_log_root")
+    event_run_id = LaunchConfiguration("event_run_id")
+    event_frame_max_age_s = LaunchConfiguration("event_frame_max_age_s")
 
     use_mavros = LaunchConfiguration("use_mavros")
     use_ca_pipeline = LaunchConfiguration("use_ca_pipeline")
@@ -358,7 +362,7 @@ def generate_launch_description():
             "use_ca_viewer": ca_use_ca_viewer,
             "use_wl_viewer": ca_use_wl_viewer,
             "camera_launch": ca_camera_launch,
-            "image_topic": ca_image_topic,
+            "image_topic": "/ca/debug_image",
             "annotated_topic": ca_annotated_topic,
             "detections_raw_topic": ca_detections_raw_topic,
             "detections_filtered_topic": ca_detections_filtered_topic,
@@ -531,6 +535,48 @@ def generate_launch_description():
     )
 
     # ------------------------------------------------------------------
+    # event logger
+    # ------------------------------------------------------------------
+    event_logger = Node(
+        package="seano_vision",
+        executable="event_logger_node",
+        name="event_logger_node",
+        output="screen",
+        condition=IfCondition(use_event_logger),
+        parameters=[
+            {
+                "log_root": event_log_root,
+                "run_id": event_run_id,
+                "image_topic": "/ca/debug_image",
+                "avoid_state_topic": "/ca/mode_manager_state",
+                "ca_mode_topic": "/ca/mode",
+                "mode_event_topic": "/ca/mode_manager_event",
+                "command_safe_topic": ca_command_topic,
+                "command_raw_topic": "/ca/command",
+                "risk_topic": "/ca/risk",
+                "failsafe_active_topic": "/ca/failsafe_active",
+                "auto_master_enable_topic": "/seano/auto_master_enable",
+                "auto_enable_topic": "/seano/auto_enable",
+                "rc_override_enable_topic": "/seano/rc_override_enable",
+                "manual_left_cmd_topic": "/seano/manual/left_cmd",
+                "manual_right_cmd_topic": "/seano/manual/right_cmd",
+                "auto_left_cmd_topic": "/seano/auto/left_cmd",
+                "auto_right_cmd_topic": "/seano/auto/right_cmd",
+                "selected_left_cmd_topic": "/seano/selected/left_cmd",
+                "selected_right_cmd_topic": "/seano/selected/right_cmd",
+                "left_cmd_topic": "/seano/left_cmd",
+                "right_cmd_topic": "/seano/right_cmd",
+                "limiter_reason_topic": "/seano/limiter_reason",
+                "rc_override_topic": "/mavros/rc/override",
+                "frame_max_age_s": ParameterValue(event_frame_max_age_s, value_type=float),
+                "save_frames": True,
+                "float_epsilon": 0.02,
+                "min_event_interval_s": 0.05,
+            }
+        ],
+    )
+
+    # ------------------------------------------------------------------
     # rosbag record
     # ------------------------------------------------------------------
     bag_dir = PathJoinSubstitution([EnvironmentVariable("HOME"), "bags"])
@@ -589,6 +635,10 @@ def generate_launch_description():
         # Core
         DeclareLaunchArgument("record", default_value="false"),
         DeclareLaunchArgument("bag_name", default_value="phase7_cuav_usb_e2e"),
+        DeclareLaunchArgument("use_event_logger", default_value="true"),
+        DeclareLaunchArgument("event_log_root", default_value="~/seano_event_logs"),
+        DeclareLaunchArgument("event_run_id", default_value=""),
+        DeclareLaunchArgument("event_frame_max_age_s", default_value="1.0"),
         DeclareLaunchArgument("master_enable_on_start", default_value="false"),
         DeclareLaunchArgument("failsafe_stale_is_active", default_value="true"),
         DeclareLaunchArgument("use_mavros", default_value="true"),
@@ -800,6 +850,7 @@ def generate_launch_description():
         bridge,
         takeover,
         mode_mgr,
+        event_logger,
         bag_record,
     ]
 

@@ -84,6 +84,8 @@ class _MgrState:
     rejoin_since: float = 0.0
     rejoin_target_mode: Optional[str] = None
     rejoin_mode_match_since: float = 0.0
+    avoid_active_decision: bool = False
+    confirmed_avoid_session: bool = False
 
 
 class MissionModeManager(Node):
@@ -121,17 +123,39 @@ class MissionModeManager(Node):
         # Outputs
         self.declare_parameter("state_out_topic", "/ca/mode_manager_state")
         self.declare_parameter("event_out_topic", "/ca/mode_manager_event")
+        self.declare_parameter("avoid_active_topic", "/ca/avoid_active")
+        self.declare_parameter("rejoin_required_avoid_s", 0.50)
+        self.declare_parameter("avoid_exit_hold_s", 0.75)
+        self.declare_parameter("avoid_enter_min_s", 0.05)
+        self.declare_parameter("valid_avoid_min_s", 0.80)
 
         # Tick
         self.declare_parameter("tick_hz", 5.0)
 
         self.st = _MgrState()
+        # SEANO_STATE_MACHINE_GOVERNOR_V5
+        self.st.avoid_active_decision = False
+        self.st.avoid_true_since = 0.0
+        self.st.avoid_false_since = 0.0
+        self.st.avoid_session_start = 0.0
+        self.st.confirmed_avoid_session = False
+        # SEANO confirmed avoidance session latch
+        self.st.avoid_active_decision = False
+        self.st.confirmed_avoid_session = False
+        self.st.avoid_true_since = 0.0
+        self.st.avoid_session_start = 0.0
 
         self.pub_state = self.create_publisher(
             String, str(self.get_parameter("state_out_topic").value), _qos(10)
         )
         self.pub_event = self.create_publisher(
             String, str(self.get_parameter("event_out_topic").value), _qos(10)
+        )
+        self.sub_avoid_active = self.create_subscription(
+            Bool,
+            str(self.get_parameter("avoid_active_topic").value),
+            self._cb_avoid_active,
+            _qos(10),
         )
 
         self.create_subscription(
@@ -175,6 +199,46 @@ class MissionModeManager(Node):
         )
 
     # -------- Callbacks --------
+
+    def _cb_avoid_active(self, msg: Bool) -> None:
+        now = float(self.get_clock().now().nanoseconds) * 1.0e-9
+        cur = bool(msg.data)
+        prev = bool(getattr(self.st, "avoid_active_decision", False))
+
+        self.st.avoid_active_decision = cur
+
+        if cur:
+            if not prev:
+                self.st.avoid_true_since = now
+                self.st.avoid_session_start = now
+                self.st.avoid_false_since = 0.0
+                self._emit_event("AVOID_ACTIVE", {"active": True})
+
+            enter_min = float(self.get_parameter("avoid_enter_min_s").value)
+            true_for = now - float(getattr(self.st, "avoid_true_since", now))
+
+            if true_for >= enter_min and not bool(
+                getattr(self.st, "confirmed_avoid_session", False)
+            ):
+                self.st.confirmed_avoid_session = True
+                self._emit_event("AVOID_CONFIRMED", {"duration_s": round(true_for, 3)})
+
+        else:
+            if prev:
+                self.st.avoid_false_since = now
+                start = float(getattr(self.st, "avoid_true_since", 0.0))
+                dur = now - start if start > 0.0 else 0.0
+
+                if not bool(getattr(self.st, "confirmed_avoid_session", False)):
+                    self._emit_event(
+                        "AVOID_BLIP_REJECTED",
+                        {"duration_s": round(dur, 3), "reason": "below_avoid_enter_min_s"},
+                    )
+
+                self._emit_event("AVOID_ACTIVE", {"active": False})
+
+            self.st.avoid_true_since = 0.0
+
     def _cb_mavros_state(self, msg: State) -> None:
         self.st.mavros_connected = bool(msg.connected)
         self.st.mavros_mode = str(msg.mode or "UNKNOWN")
@@ -301,10 +365,35 @@ class MissionModeManager(Node):
     def _compute_mgr_state(self, override_on: bool, failsafe_on: bool) -> str:
         if failsafe_on:
             return "FAILSAFE"
-        if override_on:
-            return "AVOID"
-        if bool(self.get_parameter("enable_rejoin_state").value) and self.st.rejoin_active:
-            return "REJOIN"
+
+        now = float(self.get_clock().now().nanoseconds) * 1.0e-9
+
+        avoid_active = bool(getattr(self.st, "avoid_active_decision", False))
+        confirmed = bool(getattr(self.st, "confirmed_avoid_session", False))
+
+        enter_min = float(self.get_parameter("avoid_enter_min_s").value)
+        exit_hold = float(self.get_parameter("avoid_exit_hold_s").value)
+
+        true_since = float(getattr(self.st, "avoid_true_since", 0.0))
+        false_since = float(getattr(self.st, "avoid_false_since", 0.0))
+
+        if avoid_active:
+            if true_since > 0.0 and (now - true_since) >= enter_min:
+                self.st.confirmed_avoid_session = True
+                return "AVOID"
+
+            # Provisional hazard, not a confirmed avoid state yet.
+            return "MISSION"
+
+        if confirmed:
+            if false_since > 0.0 and (now - false_since) <= exit_hold:
+                return "AVOID"
+
+            if bool(self.get_parameter("enable_rejoin_state").value) and bool(
+                getattr(self.st, "rejoin_active", False)
+            ):
+                return "REJOIN"
+
         return "MISSION"
 
     def _tick_rejoin(self) -> None:
@@ -356,6 +445,26 @@ class MissionModeManager(Node):
         )
         now = _now_s()
 
+        if not bool(getattr(self.st, "confirmed_avoid_session", False)):
+            self._emit_event("REJOIN_SKIPPED", {"reason": "no_confirmed_avoid_session"})
+            return
+        # SEANO_REJOIN_REQUIRES_CONFIRMED_AVOID_V3
+        if not bool(getattr(self.st, "confirmed_avoid_session", False)):
+            self._emit_event("REJOIN_SKIPPED", {"reason": "no_confirmed_avoid_session"})
+            return
+        # SEANO_REJOIN_REQUIRES_CONFIRMED_SESSION_V5
+        _now = float(self.get_clock().now().nanoseconds) * 1.0e-9
+        _start = float(getattr(self.st, "avoid_session_start", 0.0))
+        _dur = (_now - _start) if _start > 0.0 else 0.0
+        _min = float(self.get_parameter("rejoin_required_avoid_s").value)
+        if (not bool(getattr(self.st, "confirmed_avoid_session", False))) or (_dur < _min):
+            self.st.rejoin_active = False
+            self.st.confirmed_avoid_session = False
+            self._emit_event(
+                "REJOIN_SKIPPED",
+                {"reason": "no_valid_avoid_session", "avoid_duration_s": round(_dur, 3)},
+            )
+            return
         self.st.rejoin_active = True
         self.st.rejoin_since = now
         self.st.rejoin_target_mode = target
@@ -402,6 +511,20 @@ class MissionModeManager(Node):
 
     def _request_mode(self, mode: str, cause: str) -> None:
         mode = _norm_mode(mode)
+        # SEANO_AVOID_ACTIVE_MODE_REQUEST_GATE
+        cause_l = str(cause).lower()
+        avoid_target = _norm_mode(str(self.get_parameter("avoid_mode").value))
+        avoid_related = ("avoid" in cause_l) or ("takeover" in cause_l)
+        if (
+            mode == avoid_target
+            and avoid_related
+            and not bool(getattr(self.st, "avoid_active_decision", False))
+        ):
+            self._emit_event(
+                "MODE_REQ_SKIPPED",
+                {"mode": mode, "cause": cause, "reason": "avoid_active_false"},
+            )
+            return
         if not mode:
             return
 
@@ -466,6 +589,18 @@ class MissionModeManager(Node):
         fut.add_done_callback(_done_cb)
 
     def _emit_event(self, name: str, payload: dict) -> None:
+        # SEANO_REJOIN_EVENT_SUPPRESSOR_V5
+        try:
+            _ev = str(name)
+            if (
+                _ev.startswith("REJOIN")
+                and _ev != "REJOIN_SKIPPED"
+                and not bool(getattr(self.st, "confirmed_avoid_session", False))
+            ):
+                return
+        except Exception:
+            pass
+
         evt = {
             "t": round(_now_s(), 3),
             "event": str(name),

@@ -201,6 +201,7 @@ class RiskEvaluatorNode(Node):
         self.declare_parameter("risk_topic", "/ca/risk")
         self.declare_parameter("command_topic", "/ca/command")
         self.declare_parameter("mode_topic", "/ca/mode")
+        self.declare_parameter("avoid_active_topic", "/ca/avoid_active")
         self.declare_parameter("metrics_topic", "/ca/metrics")
         self.declare_parameter("vision_quality_topic", "/ca/vision_quality")
         self.declare_parameter("debug_image_topic", "/ca/debug_image")
@@ -444,6 +445,20 @@ class RiskEvaluatorNode(Node):
         self.pub_mode = self.create_publisher(
             String, str(self.get_parameter("mode_topic").value), self.qos
         )
+        self.pub_avoid_active = self.create_publisher(
+            Bool, str(self.get_parameter("avoid_active_topic").value), self.qos
+        )
+
+        # Sensitive avoid-active latch for low-FPS monocular video.
+        # This makes /ca/avoid_active usable by the mode manager even when
+        # the detector/risk pulse is only one or two frames long.
+        self.declare_parameter("avoid_active_enter_risk", 0.45)
+        self.declare_parameter("avoid_active_exit_risk", 0.20)
+        self.declare_parameter("avoid_active_hold_s", 0.75)
+        self.declare_parameter("avoid_active_force_from_risk", False)
+        self._avoid_active_latched = False
+        self._avoid_hold_until_sec = 0.0
+        self._last_published_risk = 0.0
         self.pub_metrics = self.create_publisher(
             String, str(self.get_parameter("metrics_topic").value), self.qos
         )
@@ -1026,9 +1041,18 @@ class RiskEvaluatorNode(Node):
         metrics["mode"] = self.mode
         metrics["active_geometry_profile"] = str(self.get_parameter("geometry_profile_name").value)
 
+        self._last_published_risk = float(float(overall_risk))
         self.pub_risk.publish(Float32(data=float(overall_risk)))
         self.pub_cmd.publish(String(data=str(cmd)))
         self.pub_mode.publish(String(data=str(self.mode)))
+        self.pub_avoid_active.publish(
+            Bool(
+                data=self._govern_avoid_active(
+                    bool(self._seano_final_avoid_active(locals())),
+                    float(getattr(self, "_last_published_risk", 0.0)),
+                )
+            )
+        )
 
         vq = float(metrics.get("vision_quality", 1.0))
         self.pub_vq.publish(Float32(data=float(vq)))
@@ -2241,6 +2265,178 @@ class RiskEvaluatorNode(Node):
             self.pub_dbg.publish(out)
         except Exception:
             return
+
+    # SEANO_FINAL_AVOID_ACTIVE_GATE_V5
+    def _seano_final_avoid_active(self, ctx=None) -> bool:
+        """Final authority signal for /ca/avoid_active.
+
+        This must not be raw risk. It must be false when perception/gate
+        logic says the system is not allowed to perform avoidance.
+        """
+        try:
+            ctx = ctx or {}
+
+            items = []
+
+            for name in (
+                "mode",
+                "ca_mode",
+                "mode_text",
+                "gate",
+                "gate_reason",
+                "reason",
+                "why",
+                "cmd",
+                "command",
+                "safe_cmd",
+                "situation",
+                "target",
+                "status",
+                "track_state",
+            ):
+                if hasattr(self, name):
+                    value = getattr(self, name)
+                    if isinstance(value, (str, int, float, bool)):
+                        items.append(f"{name}={value}")
+
+            for key, value in ctx.items():
+                lk = str(key).lower()
+                if any(
+                    s in lk
+                    for s in (
+                        "mode",
+                        "gate",
+                        "reason",
+                        "why",
+                        "cmd",
+                        "command",
+                        "situation",
+                        "target",
+                        "status",
+                        "track",
+                        "dom",
+                    )
+                ):
+                    if isinstance(value, (str, int, float, bool)):
+                        items.append(f"{lk}={value}")
+
+            text = " ".join(items).upper()
+
+            hard_reject = (
+                "LOST_PERCEPTION",
+                "FORCED_LOST_PERCEPTION",
+                "NO_TARGET",
+                "TARGET_LOST",
+                "STALE",
+                "IMAGE_STALE",
+                "CAMERA_STALE",
+                "FREEZE",
+                "FAILSAFE",
+                "WATCHDOG",
+                "FORCED_STOP",
+            )
+
+            if any(token in text for token in hard_reject):
+                return False
+
+            positive_names = (
+                "avoid_on",
+                "avoid_enabled",
+                "avoid_authorized",
+                "avoid_active_final",
+                "final_avoid_active",
+                "avoid_decision",
+                "avoid_cmd_active",
+                "takeover_request",
+                "takeover_active",
+            )
+
+            for key, value in ctx.items():
+                lk = str(key).lower()
+
+                if lk in positive_names:
+                    if isinstance(value, bool):
+                        return bool(value)
+
+                    if isinstance(value, (int, float)):
+                        return float(value) > 0.5
+
+                    if isinstance(value, str):
+                        sv = value.strip().upper()
+                        if sv in ("ON", "TRUE", "YES", "AVOID", "HOLD_AVOID", "TAKEOVER"):
+                            return True
+                        if sv in ("OFF", "FALSE", "NO", "MISSION", "REJOIN", "STOP"):
+                            return False
+
+            # Fallback only if old code has raw avoid_active. This is still
+            # protected by the hard reject gate above.
+            for key in ("avoid_active", "raw_avoid_active", "hazard_active", "risk_active"):
+                if key in ctx:
+                    value = ctx[key]
+                    if isinstance(value, bool):
+                        return bool(value)
+                    if isinstance(value, (int, float)):
+                        return float(value) > 0.5
+                    if isinstance(value, str):
+                        return value.strip().lower() in ("1", "true", "yes", "on", "avoid")
+
+            return False
+
+        except Exception:
+            return False
+
+    def _pfloat_safe(self, name: str, default: float) -> float:
+        try:
+            return float(self.get_parameter(name).value)
+        except Exception:
+            return float(default)
+
+    def _pbool_safe(self, name: str, default: bool) -> bool:
+        try:
+            v = self.get_parameter(name).value
+            if isinstance(v, str):
+                return v.strip().lower() in ("1", "true", "yes", "on")
+            return bool(v)
+        except Exception:
+            return bool(default)
+
+    def _govern_avoid_active(self, raw_active: bool, risk_value: float) -> bool:
+        """
+        Anti-sticky avoid-active governor.
+
+        Design rule:
+        - /ca/avoid_active must represent confirmed avoidance intent.
+        - Risk spike alone must not keep the system in AVOID forever.
+        - If force_from_risk is disabled, risk is not allowed to hold the latch.
+        """
+        now_s = self.get_clock().now().nanoseconds * 1e-9
+
+        enter_risk = self._pfloat_safe("avoid_active_enter_risk", 0.45)
+        exit_risk = self._pfloat_safe("avoid_active_exit_risk", 0.20)
+        hold_s = max(0.0, self._pfloat_safe("avoid_active_hold_s", 0.75))
+        force_from_risk = self._pbool_safe("avoid_active_force_from_risk", False)
+
+        try:
+            risk = max(0.0, min(1.0, float(risk_value)))
+        except Exception:
+            risk = 0.0
+
+        raw_trigger = bool(raw_active)
+        risk_trigger = bool(force_from_risk and risk >= enter_risk)
+
+        trigger = raw_trigger or risk_trigger
+
+        if trigger:
+            self._avoid_active_latched = True
+            self._avoid_hold_until_sec = max(self._avoid_hold_until_sec, now_s + hold_s)
+        else:
+            # Important: when force_from_risk is False, risk must not keep the latch alive.
+            if now_s >= self._avoid_hold_until_sec:
+                self._avoid_active_latched = False
+            elif force_from_risk and risk > exit_risk:
+                self._avoid_hold_until_sec = max(self._avoid_hold_until_sec, now_s + 0.10)
+
+        return bool(self._avoid_active_latched)
 
 
 def main(args=None) -> None:
