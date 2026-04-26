@@ -1,0 +1,11 @@
+Trial,Run ID,Max Risk Score,Avoidance Activation Delay (s),Observation-to-Maneuver Time (s),Avoidance Duration (s),Max Thruster Difference,Mission Recovery,Outcome,Turn Commands Observed,Total Events,AVOID Events,REJOIN Events,MISSION Events,STOP Events,TURN Events,Last STOP Before First Turn Seq,First Turn Seq,Max Delta Seq,Max Delta Left Cmd,Max Delta Right Cmd
+01,phase5_journal_dynamic_01,1.0000,0.000,0.509,56.615,0.5650,Yes,Success,"TURN_LEFT_SLOW,TURN_RIGHT_SLOW",277,230,15,32,130,33,41,42,43,0.0000,0.5650
+02,phase5_journal_dynamic_02,1.0000,0.000,1.250,44.805,0.5650,Yes,Success,"TURN_LEFT_SLOW,TURN_RIGHT_SLOW",301,242,12,46,148,42,26,27,28,0.0000,0.5650
+03,phase5_journal_dynamic_03,1.0000,0.000,0.638,52.405,0.5650,Yes,Success,"TURN_LEFT_SLOW,TURN_RIGHT_SLOW",481,391,21,68,250,69,31,32,33,0.0000,0.5650
+04,phase5_journal_dynamic_04,1.0000,0.000,0.777,59.048,0.5650,Yes,Success,"TURN_LEFT_SLOW,TURN_RIGHT_SLOW",264,234,12,18,120,49,28,29,30,0.0000,0.5650
+05,phase5_journal_dynamic_05,1.0000,0.000,0.469,65.786,0.5650,Yes,Success,"TURN_LEFT_SLOW,TURN_RIGHT_SLOW",172,138,9,25,90,18,59,60,61,0.0000,0.5650
+06,phase5_journal_dynamic_06,1.0000,0.000,0.919,51.615,0.5650,Yes,Success,"TURN_LEFT_SLOW,TURN_RIGHT_SLOW",151,130,5,15,72,21,30,31,32,0.0000,0.5650
+07,phase5_journal_dynamic_07,1.0000,0.000,1.621,60.947,0.5650,Yes,Success,"TURN_LEFT_SLOW,TURN_RIGHT_SLOW",172,139,9,24,87,20,56,57,58,0.0000,0.5650
+08,phase5_journal_dynamic_08,1.0000,0.040,0.566,48.405,0.5650,Yes,Success,"TURN_LEFT_SLOW,TURN_RIGHT_SLOW",169,136,10,22,85,25,27,28,29,0.0000,0.5650
+09,phase5_journal_dynamic_09,1.0000,0.000,0.527,53.414,0.5650,Yes,Success,"TURN_LEFT_SLOW,TURN_RIGHT_SLOW",161,132,3,25,84,23,10,11,12,0.0000,0.5650
+10,phase5_journal_dynamic_10,1.0000,0.000,1.532,48.797,0.5650,Yes,Success,"TURN_LEFT_SLOW,TURN_RIGHT_SLOW",175,141,7,27,90,20,23,24,25,0.0000,0.5650

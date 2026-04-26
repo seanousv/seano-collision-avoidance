@@ -39,7 +39,6 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass
-import json
 import math
 import time
 from typing import Deque, Dict, List, Optional, Tuple
@@ -287,6 +286,26 @@ class RiskEvaluatorNode(Node):
         self.declare_parameter("cmd_turn_left", "TURN_LEFT")
         self.declare_parameter("cmd_turn_right", "TURN_RIGHT")
         self.declare_parameter("cmd_stop", "STOP")
+        # Stop-observe-escape governor for dynamic obstacle experiments.
+        # The vessel first stops, observes target motion briefly, then selects
+        # an escape side. This is a reactive safety layer, not pure COLREG.
+        self.declare_parameter("stop_observe_escape_enable", True)
+        self.declare_parameter("stop_observe_enter_risk", 0.25)
+        self.declare_parameter("stop_observe_exit_risk", 0.16)
+        self.declare_parameter("stop_observe_min_s", 0.65)
+        self.declare_parameter("stop_observe_turn_min_s", 1.20)
+        self.declare_parameter("stop_observe_left_bearing_deg", -4.0)
+        self.declare_parameter("stop_observe_right_bearing_deg", 4.0)
+        self.declare_parameter("stop_observe_left_x_ratio", 0.47)
+        self.declare_parameter("stop_observe_right_x_ratio", 0.53)
+        self.declare_parameter("stop_observe_use_slow_turn", True)
+
+        self._soe_state = "IDLE"  # IDLE | OBSERVE | TURN
+        self._soe_state_t = 0.0
+        self._soe_direction = "RIGHT"
+        self._soe_reason = "idle"
+        self._soe_last_target_id = None
+        self._soe_bearing_hist = []
 
         self.declare_parameter("prefer_starboard", True)
         self.declare_parameter("emergency_turn_away", True)
@@ -1020,20 +1039,128 @@ class RiskEvaluatorNode(Node):
             metrics["reason_codes"] = ["LOST_PERCEPTION", "FORCED_STOP"]
         else:
             cmd = self._decide_command(t, overall_risk, top, metrics)
+        cmd = self._apply_stop_observe_escape(t, cmd, overall_risk, top, metrics)
 
-            if self.mode == "CAUTION":
-                metrics["vision_mode"] = "CAUTION"
-                if cmd.startswith("TURN"):
-                    cmd = str(self.get_parameter("cmd_slow").value)
-                    metrics.setdefault("reason_codes", []).append("CAUTION_DEESCALATE_TURN")
-                if overall_risk < 0.25:
-                    cmd = str(self.get_parameter("cmd_hold").value)
-                    metrics.setdefault("reason_codes", []).append("CAUTION_HOLD_LOW_RISK")
-                self._maybe_update_cmd(t, cmd, float(self.get_parameter("min_cmd_hold_s").value))
-                cmd = self.last_cmd
-                metrics["cmd"] = cmd
-            else:
-                metrics["vision_mode"] = "NORMAL"
+        if self.mode == "CAUTION":
+            metrics["vision_mode"] = "CAUTION"
+            if cmd.startswith("TURN"):
+                cmd = str(self.get_parameter("cmd_slow").value)
+                metrics.setdefault("reason_codes", []).append("CAUTION_DEESCALATE_TURN")
+            if overall_risk < 0.25:
+                cmd = str(self.get_parameter("cmd_hold").value)
+                metrics.setdefault("reason_codes", []).append("CAUTION_HOLD_LOW_RISK")
+            self._maybe_update_cmd(t, cmd, float(self.get_parameter("min_cmd_hold_s").value))
+            cmd = self.last_cmd
+            metrics["cmd"] = cmd
+        else:
+            metrics["vision_mode"] = "NORMAL"
+
+        # SEANO_AVOID_MODE_OUTPUT_NORMALIZATION
+        # Keep HUD, /ca/avoid_active, and mode manager state consistent.
+        cmd_u = str(cmd).strip().upper()
+        gate_u = str(metrics.get("decision_gate", "")).strip().upper()
+
+        active_cmd = cmd_u in (
+            "STOP",
+            "SLOW_DOWN",
+            "TURN_RIGHT",
+            "TURN_RIGHT_SLOW",
+            "TURN_LEFT",
+            "TURN_LEFT_SLOW",
+            "DODGE_RIGHT",
+            "DODGE_LEFT",
+        )
+        active_gate = gate_u in (
+            "STOP_OBSERVE",
+            "STOP_OBSERVE_ESCAPE",
+            "COMMAND_IMPLIES_AVOID",
+        )
+
+        clear_cmd = cmd_u in (
+            "",
+            "NONE",
+            "HOLD",
+            "HOLD_COURSE",
+        )
+        clear_gate = gate_u in (
+            "EXIT_AVOID",
+            "TRACK",
+            "WAIT_IMAGE_GEOMETRY",
+        )
+
+        try:
+            risk_for_state = float(overall_risk)
+        except Exception:
+            risk_for_state = 0.0
+
+        try:
+            exit_risk_for_state = float(self.get_parameter("stop_observe_exit_risk").value)
+        except Exception:
+            try:
+                exit_risk_for_state = float(self.get_parameter("exit_avoid_risk").value)
+            except Exception:
+                exit_risk_for_state = 0.16
+
+        no_target = top is None
+        force_clear = (
+            clear_cmd
+            and (clear_gate or no_target)
+            and risk_for_state <= max(0.05, exit_risk_for_state + 0.02)
+        )
+
+        avoid_active_out = bool(
+            active_cmd or active_gate or (bool(self.avoid_mode) and not force_clear)
+        )
+
+        if force_clear:
+            avoid_active_out = False
+
+        self.avoid_mode = avoid_active_out
+        metrics["avoid_mode"] = avoid_active_out
+        metrics["avoid_active"] = avoid_active_out
+
+        # SEANO_FINAL_AVOID_ACTIVE_STATE_SYNC
+        # Single source of truth for HUD, event log, and /ca/avoid_active.
+        cmd_u = str(cmd).strip().upper()
+        gate_u = str(metrics.get("decision_gate", "")).strip().upper()
+
+        active_cmd = cmd_u in (
+            "STOP",
+            "SLOW_DOWN",
+            "TURN_RIGHT",
+            "TURN_RIGHT_SLOW",
+            "TURN_LEFT",
+            "TURN_LEFT_SLOW",
+            "DODGE_RIGHT",
+            "DODGE_LEFT",
+        )
+        active_gate = gate_u in (
+            "STOP_OBSERVE",
+            "STOP_OBSERVE_ESCAPE",
+            "COMMAND_IMPLIES_AVOID",
+        )
+
+        clear_cmd = cmd_u in ("", "NONE", "HOLD", "HOLD_COURSE")
+        try:
+            risk_for_active = float(overall_risk)
+        except Exception:
+            risk_for_active = 0.0
+
+        no_target = top is None
+        force_clear = clear_cmd and no_target and risk_for_active <= 0.20
+
+        final_avoid_active = bool(
+            active_cmd
+            or active_gate
+            or bool(metrics.get("avoid_mode", False))
+            or bool(self.avoid_mode)
+        )
+        if force_clear:
+            final_avoid_active = False
+
+        self.avoid_mode = final_avoid_active
+        metrics["avoid_mode"] = final_avoid_active
+        metrics["avoid_active"] = final_avoid_active
 
         proc_ms = (time.time() - t0) * 1000.0
         metrics["proc_ms"] = float(proc_ms)
@@ -1045,20 +1172,36 @@ class RiskEvaluatorNode(Node):
         self.pub_risk.publish(Float32(data=float(overall_risk)))
         self.pub_cmd.publish(String(data=str(cmd)))
         self.pub_mode.publish(String(data=str(self.mode)))
-        self.pub_avoid_active.publish(
-            Bool(
-                data=self._govern_avoid_active(
-                    bool(self._seano_final_avoid_active(locals())),
-                    float(getattr(self, "_last_published_risk", 0.0)),
-                )
-            )
-        )
+        self.pub_avoid_active.publish(Bool(data=bool(metrics.get("avoid_active", self.avoid_mode))))
 
         vq = float(metrics.get("vision_quality", 1.0))
         self.pub_vq.publish(Float32(data=float(vq)))
 
         try:
-            self.pub_metrics.publish(String(data=json.dumps(metrics)))
+            avoid_active_out = bool(
+                self.avoid_mode
+                or bool(metrics.get("avoid_mode", False))
+                or str(metrics.get("decision_gate", "")).upper()
+                in (
+                    "STOP_OBSERVE",
+                    "STOP_OBSERVE_ESCAPE",
+                    "COMMAND_IMPLIES_AVOID",
+                )
+                or str(cmd).strip().upper()
+                in (
+                    "STOP",
+                    "SLOW_DOWN",
+                    "TURN_RIGHT",
+                    "TURN_RIGHT_SLOW",
+                    "TURN_LEFT",
+                    "TURN_LEFT_SLOW",
+                    "DODGE_RIGHT",
+                    "DODGE_LEFT",
+                )
+            )
+            self.avoid_mode = avoid_active_out
+            metrics["avoid_mode"] = avoid_active_out
+            # removed: pub_metrics is not Bool; avoid_active is published via pub_avoid_active
         except Exception:
             pass
 
@@ -1570,6 +1713,211 @@ class RiskEvaluatorNode(Node):
         if situation == "DIVERGING":
             return "COLREG_INSPIRED: DIVERGING"
         return "COLREG_INSPIRED: UNKNOWN"
+
+    # SEANO_STOP_OBSERVE_ESCAPE_GOVERNOR
+    def _soe_get(self, obj, names, default=None):
+        if obj is None:
+            return default
+        if isinstance(names, str):
+            names = [names]
+        for name in names:
+            if isinstance(obj, dict) and name in obj:
+                return obj.get(name)
+            if hasattr(obj, name):
+                return getattr(obj, name)
+        return default
+
+    def _soe_float(self, value, default=0.0):
+        try:
+            if value is None:
+                return default
+            return float(value)
+        except Exception:
+            return default
+
+    def _soe_bool(self, value, default=False):
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return default
+        s = str(value).strip().upper()
+        if s in ("1", "TRUE", "YES", "Y", "ON"):
+            return True
+        if s in ("0", "FALSE", "NO", "N", "OFF"):
+            return False
+        return default
+
+    def _soe_choose_direction(self, top, metrics):
+        situation = str(metrics.get("situation", "")).upper()
+        colreg = str(metrics.get("colreg_inspired", "") or metrics.get("colreg", "")).upper()
+
+        brg = self._soe_float(
+            self._soe_get(
+                top,
+                ["bearing_deg", "brg_deg", "brg", "bearing", "rel_bearing_deg"],
+                metrics.get("bearing_deg", metrics.get("brg", None)),
+            ),
+            0.0,
+        )
+        x_ratio = self._soe_float(
+            self._soe_get(
+                top,
+                ["x_ratio", "cx_norm", "center_x", "x"],
+                metrics.get("x_ratio", None),
+            ),
+            0.5,
+        )
+
+        left_brg = float(self.get_parameter("stop_observe_left_bearing_deg").value)
+        right_brg = float(self.get_parameter("stop_observe_right_bearing_deg").value)
+        left_x = float(self.get_parameter("stop_observe_left_x_ratio").value)
+        right_x = float(self.get_parameter("stop_observe_right_x_ratio").value)
+
+        # COLREG-inspired priority: head-on should bias to starboard/right.
+        if "HEAD_ON" in situation or "HEAD-ON" in situation or "STARBOARD_BIAS" in colreg:
+            return "RIGHT", "HEAD_ON_STARBOARD_BIAS"
+
+        # User-requested reactive escape rule:
+        # obstacle on port/left side -> turn right.
+        # obstacle on starboard/right side -> turn left.
+        if brg <= left_brg or x_ratio <= left_x:
+            return "RIGHT", "TARGET_LEFT_ESCAPE_RIGHT"
+
+        if brg >= right_brg or x_ratio >= right_x:
+            return "LEFT", "TARGET_RIGHT_ESCAPE_LEFT"
+
+        # If almost centered, keep maritime starboard preference.
+        return "RIGHT", "CENTERED_STARBOARD_BIAS"
+
+    def _apply_stop_observe_escape(self, t, cmd, risk, top, metrics):
+        if not bool(self.get_parameter("stop_observe_escape_enable").value):
+            return cmd
+
+        cmd_hold = str(self.get_parameter("cmd_hold").value)
+        cmd_stop = str(self.get_parameter("cmd_stop").value)
+        cmd_tr = str(self.get_parameter("cmd_turn_right").value)
+        cmd_tl = str(self.get_parameter("cmd_turn_left").value)
+        cmd_trs = str(self.get_parameter("cmd_turn_right_slow").value)
+        cmd_tls = str(self.get_parameter("cmd_turn_left_slow").value)
+
+        enter_risk = float(self.get_parameter("stop_observe_enter_risk").value)
+        exit_risk = float(self.get_parameter("stop_observe_exit_risk").value)
+        observe_min_s = float(self.get_parameter("stop_observe_min_s").value)
+        turn_min_s = float(self.get_parameter("stop_observe_turn_min_s").value)
+        use_slow = bool(self.get_parameter("stop_observe_use_slow_turn").value)
+
+        risk = self._soe_float(risk, 0.0)
+        now = self._soe_float(t, 0.0)
+
+        target_id = self._soe_get(top, ["track_id", "id", "tid"], metrics.get("target_id", None))
+        brg = self._soe_float(
+            self._soe_get(
+                top, ["bearing_deg", "brg_deg", "brg", "bearing"], metrics.get("brg", None)
+            ),
+            0.0,
+        )
+
+        reason_text = " ".join(
+            str(metrics.get(k, ""))
+            for k in ("why", "reason", "reason_codes", "situation", "colreg_inspired")
+        ).upper()
+
+        corridor = self._soe_bool(
+            self._soe_get(top, ["corridor", "in_corridor"], metrics.get("corridor", None)),
+            False,
+        )
+
+        dynamic_hazard = (
+            top is not None
+            and risk >= enter_risk
+            and (
+                corridor
+                or "VERY_CLOSE" in reason_text
+                or "VTTC" in reason_text
+                or str(cmd).upper()
+                in (
+                    "STOP",
+                    "SLOW_DOWN",
+                    "TURN_LEFT",
+                    "TURN_RIGHT",
+                    "TURN_LEFT_SLOW",
+                    "TURN_RIGHT_SLOW",
+                )
+            )
+        )
+
+        if not dynamic_hazard:
+            if self._soe_state != "IDLE" and risk <= exit_risk:
+                self._soe_state = "IDLE"
+                self._soe_reason = "clear"
+                metrics["stop_observe_state"] = "IDLE"
+                metrics["stop_observe_reason"] = "clear"
+                return cmd_hold
+
+            metrics["stop_observe_state"] = self._soe_state
+            metrics["stop_observe_reason"] = self._soe_reason
+            return cmd
+
+        # New obstacle/session.
+        if self._soe_state == "IDLE" or (
+            target_id is not None
+            and self._soe_last_target_id is not None
+            and str(target_id) != str(self._soe_last_target_id)
+        ):
+            self._soe_state = "OBSERVE"
+            self._soe_state_t = now
+            self._soe_last_target_id = target_id
+            self._soe_bearing_hist = []
+            self._soe_direction, self._soe_reason = self._soe_choose_direction(top, metrics)
+
+        self._soe_bearing_hist.append((now, brg))
+        self._soe_bearing_hist = self._soe_bearing_hist[-12:]
+
+        elapsed = max(0.0, now - self._soe_state_t)
+
+        if self._soe_state == "OBSERVE":
+            self.avoid_mode = True
+            metrics["stop_observe_state"] = "OBSERVE"
+            metrics["stop_observe_direction"] = self._soe_direction
+            metrics["stop_observe_reason"] = self._soe_reason
+            metrics["decision_gate"] = "STOP_OBSERVE"
+            metrics["avoid_mode"] = True
+
+            if elapsed < observe_min_s:
+                metrics["cmd"] = cmd_stop
+                return cmd_stop
+
+            self._soe_direction, self._soe_reason = self._soe_choose_direction(top, metrics)
+            self._soe_state = "TURN"
+            self._soe_state_t = now
+
+        if self._soe_state == "TURN":
+            turn_cmd = (
+                (cmd_trs if self._soe_direction == "RIGHT" else cmd_tls)
+                if use_slow
+                else (cmd_tr if self._soe_direction == "RIGHT" else cmd_tl)
+            )
+
+            self.avoid_mode = True
+            metrics["stop_observe_state"] = "TURN"
+            metrics["stop_observe_direction"] = self._soe_direction
+            metrics["stop_observe_reason"] = self._soe_reason
+            metrics["decision_gate"] = "STOP_OBSERVE_ESCAPE"
+            metrics["avoid_mode"] = True
+            metrics["cmd"] = turn_cmd
+
+            elapsed_turn = max(0.0, now - self._soe_state_t)
+            if elapsed_turn >= turn_min_s and risk <= exit_risk:
+                self._soe_state = "IDLE"
+                self._soe_reason = "turn_complete_clear"
+                metrics["stop_observe_state"] = "IDLE"
+                metrics["stop_observe_reason"] = "turn_complete_clear"
+                metrics["cmd"] = cmd_hold
+                return cmd_hold
+
+            return turn_cmd
+
+        return cmd
 
     def _decide_command(self, t: float, risk: float, top: Optional[Track], metrics: dict) -> str:
         cmd_hold = str(self.get_parameter("cmd_hold").value)
