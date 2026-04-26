@@ -84,3 +84,6 @@ runs/
 wandb/
 .cache/
 output.ts
+
+# Local journal/raw experimental data
+seano_ca_ws/journal_data/
